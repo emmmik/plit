@@ -12,3 +12,7 @@ version = "0.1.0"
 dependencies = [
  "raft-core",
 ]
+
+[[package]]
+name = "simsim"
+version = "0.1.0"
