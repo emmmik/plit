@@ -1,8 +1,25 @@
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Event {
     MessageDelivered { from: u32, to: u32 },
     TimeJumped { new_time: u32 },
     TimerFired { node: u32 },
+}
+
+pub struct World {
+    now_ms: u32,
+    agenda: Vec<Event>,
+    trace: Vec<Event>,
+}
+
+impl World {
+    pub fn step(&mut self) {
+        self.trace.push(self.agenda[0]);
+        self.agenda.remove(0);
+
+        if let Event::TimeJumped { new_time } = self.trace[self.trace.len() - 1] {
+            self.now_ms = new_time;
+        }
+    }
 }
 
 impl Event {
@@ -35,7 +52,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_works() {
+    fn event_formatting() {
         let events: Vec<Event> = vec![
             Event::MessageDelivered { from: 1, to: 2 },
             Event::TimeJumped { new_time: 200 },
@@ -49,5 +66,26 @@ mod tests {
             events_string,
             "A message was delivered from node 1 to node 2. The time has jumped to 200. The timer has fired on node 3. "
         );
+    }
+
+    #[test]
+    fn world_step() {
+        let events: Vec<Event> = vec![
+            Event::MessageDelivered { from: 1, to: 2 },
+            Event::TimeJumped { new_time: 200 },
+            Event::TimerFired { node: 3 },
+        ];
+
+        let mut world = World {
+            now_ms: 0,
+            agenda: events,
+            trace: Vec::new(),
+        };
+
+        world.step();
+        assert_eq!(world.now_ms, 0);
+        world.step();
+        assert_eq!(world.agenda.len(), 1);
+        assert_eq!(world.now_ms, 200);
     }
 }
