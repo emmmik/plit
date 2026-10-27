@@ -1,23 +1,33 @@
-#[derive(Debug, PartialEq, Clone, Copy)]
+use std::{cmp::Reverse, collections::BinaryHeap};
+
+#[derive(Debug, PartialEq, Clone, Copy, Eq, Ord, PartialOrd)]
 pub enum Event {
     MessageDelivered { from: u32, to: u32 },
-    TimeJumped { new_time: u32 },
+    TimeJumped { new_time: u64 },
     TimerFired { node: u32 },
 }
 
 pub struct World {
-    now_ms: u32,
-    agenda: Vec<Event>,
+    now_ms: u64,
+    next_event_id: u64,
+    agenda: BinaryHeap<Reverse<(u64, u64, Event)>>,
     trace: Vec<Event>,
 }
 
 impl World {
-    pub fn step(&mut self) {
-        self.trace.push(self.agenda[0]);
-        self.agenda.remove(0);
+    pub fn step(&mut self) -> Result<Event, &'static str> {
+        match self.agenda.is_empty() {
+            false => {
+                let Reverse(agenda_element) = self.agenda.pop().unwrap();
+                let (due_time, id, next_event) = agenda_element;
+                self.trace.push(next_event);
+                self.now_ms = due_time;
 
-        if let Event::TimeJumped { new_time } = self.trace[self.trace.len() - 1] {
-            self.now_ms = new_time;
+                // When an event triggers another event, increase next_event_id and push here
+
+                Ok(next_event)
+            }
+            true => Err("Can't execute a step(): the agenda is empty!"),
         }
     }
 }
@@ -70,22 +80,41 @@ mod tests {
 
     #[test]
     fn world_step() {
-        let events: Vec<Event> = vec![
+        let mut agenda_events: BinaryHeap<Reverse<(u64, u64, Event)>> = BinaryHeap::new(); /* = vec![
+        Event::MessageDelivered { from: 1, to: 2 },
+        Event::TimeJumped { new_time: 200 },
+        Event::TimerFired { node: 3 },
+        ];*/
+
+        agenda_events.push(Reverse((
+            100,
+            1,
             Event::MessageDelivered { from: 1, to: 2 },
-            Event::TimeJumped { new_time: 200 },
-            Event::TimerFired { node: 3 },
-        ];
+        )));
+
+        agenda_events.push(Reverse((
+            300,
+            3,
+            Event::MessageDelivered { from: 1, to: 2 },
+        )));
+
+        agenda_events.push(Reverse((200, 2, Event::TimerFired { node: 3 })));
 
         let mut world = World {
             now_ms: 0,
-            agenda: events,
+            next_event_id: 0,
+            agenda: agenda_events,
             trace: Vec::new(),
         };
 
         world.step();
-        assert_eq!(world.now_ms, 0);
+        assert_eq!(world.now_ms, 100);
         world.step();
         assert_eq!(world.agenda.len(), 1);
         assert_eq!(world.now_ms, 200);
+        // world.step();
+        // if let Err(e) = world.step() {
+        //     println!("Error: {}", e);
+        // }
     }
 }
