@@ -46,6 +46,22 @@ impl Node {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct XorShiftRng {
+    state: u64,
+}
+
+impl XorShiftRng {
+    pub fn next_state(&mut self) -> u64 {
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 5;
+        self.state = x;
+        self.state
+    }
+}
+
 #[derive(Debug)]
 pub struct World {
     now_ms: u64,
@@ -53,9 +69,38 @@ pub struct World {
     agenda: BinaryHeap<Reverse<(u64, u64, Event)>>,
     trace: Vec<(u64, Event)>,
     nodes: Vec<Node>,
+    generator: XorShiftRng,
+    config: ScenarioConfig,
 }
 
 impl World {
+    pub fn new(seed: u64, config: ScenarioConfig) -> Self {
+        let nodes = vec![
+            Node {
+                peers: vec![1, 2],
+                value: 0,
+            },
+            Node {
+                peers: vec![0, 2],
+                value: 0,
+            },
+            Node {
+                peers: vec![0, 1],
+                value: 5,
+            },
+        ];
+
+        Self {
+            now_ms: 0,
+            next_event_id: 0,
+            agenda: BinaryHeap::new(),
+            trace: vec![],
+            nodes,
+            generator: XorShiftRng { state: seed + 730 },
+            config,
+        }
+    }
+
     pub fn step(&mut self) -> Result<Event, &'static str> {
         match self.agenda.is_empty() {
             false => {
@@ -75,7 +120,10 @@ impl World {
                 };
 
                 for &action in new_actions.iter() {
-                    self.handle_action(action_node, action);
+                    let is_dropped = self.generator.next_state() % 100;
+                    if is_dropped >= self.config.drop_percent {
+                        self.handle_action(action_node, action);
+                    }
                 }
 
                 self.trace.push((due_time, next_event));
@@ -107,7 +155,8 @@ impl World {
                     value,
                 };
                 // A demo delay in delivery time is put for testing
-                self.insert_into_agenda(self.now_ms + 10, new_event);
+                let delay = self.generator.next_state() % self.config.max_delay + 1;
+                self.insert_into_agenda(self.now_ms + delay, new_event);
             }
         }
     }
@@ -136,6 +185,12 @@ pub fn print_event_list(events: &[(u64, Event)]) {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ScenarioConfig {
+    max_delay: u64,
+    drop_percent: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,28 +217,11 @@ mod tests {
 
     #[test]
     fn world_step() {
-        let nodes = vec![
-            Node {
-                peers: vec![1, 2],
-                value: 0,
-            },
-            Node {
-                peers: vec![0, 2],
-                value: 0,
-            },
-            Node {
-                peers: vec![0, 1],
-                value: 5,
-            },
-        ];
-
-        let mut world = World {
-            now_ms: 0,
-            next_event_id: 0,
-            agenda: BinaryHeap::new(),
-            trace: Vec::new(),
-            nodes,
+        let config = ScenarioConfig {
+            max_delay: 10,
+            drop_percent: 0,
         };
+        let mut world = World::new(43, config);
 
         world.insert_into_agenda(
             100,
@@ -207,7 +245,6 @@ mod tests {
 
         let _ = world.step();
 
-        // println!("{:#?}", world);
         assert_eq!(world.now_ms, 100);
         assert_eq!(
             world.trace[0],
@@ -222,40 +259,49 @@ mod tests {
         );
 
         _ = world.step();
-        assert_eq!(world.now_ms, 110);
+        assert!(world.now_ms > 100 && world.now_ms <= 110);
     }
 
     #[test]
-    fn world_run() {
-        let nodes = vec![
-            Node {
-                peers: vec![1, 2],
-                value: 5,
-            },
-            Node {
-                peers: vec![0, 2],
-                value: 0,
-            },
-            Node {
-                peers: vec![0, 1],
-                value: 0,
-            },
-        ];
-
-        let mut world = World {
-            now_ms: 0,
-            next_event_id: 0,
-            agenda: BinaryHeap::new(),
-            trace: Vec::new(),
-            nodes,
+    fn world_run_determinism() {
+        let config = ScenarioConfig {
+            max_delay: 300,
+            drop_percent: 20,
         };
+        let mut world1 = World::new(42, config);
+        let mut world2 = World::new(42, config);
+        let mut world3 = World::new(45, config);
+        world1.insert_into_agenda(100, Event::TimerFired { node: 2 });
+        world2.insert_into_agenda(100, Event::TimerFired { node: 2 });
+        world3.insert_into_agenda(100, Event::TimerFired { node: 2 });
 
-        world.insert_into_agenda(100, Event::TimerFired { node: 0 });
+        world1.run(1000);
+        world2.run(1000);
+        world3.run(1000);
 
-        world.run(300);
-        assert_eq!(world.nodes[0].value, 5);
-        assert_eq!(world.nodes[1].value, 5);
-        assert_eq!(world.nodes[2].value, 5);
-        assert!(world.agenda.is_empty());
+        assert_eq!(world1.trace, world2.trace);
+        assert_ne!(world1.trace, world3.trace);
+        assert_ne!(world2.trace, world3.trace);
+        // assert_eq!(world.nodes[1].value, 5);
+        // assert_eq!(world.nodes[2].value, 5);
+        assert!(world1.agenda.is_empty());
+    }
+
+    #[test]
+    fn world_run_convergence() {
+        let config = ScenarioConfig {
+            max_delay: 300,
+            drop_percent: 0,
+        };
+        let mut world1 = World::new(42, config);
+        world1.insert_into_agenda(100, Event::TimerFired { node: 0 });
+        world1.insert_into_agenda(100, Event::TimerFired { node: 1 });
+        world1.insert_into_agenda(100, Event::TimerFired { node: 2 });
+
+        world1.run(10000);
+
+        assert_eq!(world1.nodes[1].value, 5);
+        assert_eq!(world1.nodes[2].value, 5);
+        assert_eq!(world1.nodes[0].value, 5);
     }
 }
