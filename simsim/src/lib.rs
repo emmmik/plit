@@ -70,7 +70,54 @@ pub struct World {
     trace: Vec<(u64, Event)>,
     nodes: Vec<Node>,
     generator: XorShiftRng,
+    seed: u64,
     config: ScenarioConfig,
+}
+
+#[derive(Debug)]
+pub struct Checker {
+    values: Vec<u64>,
+}
+
+impl Checker {
+    pub fn new(world: &World) -> Self {
+        let mut values = vec![];
+        for node in &world.nodes {
+            values.push(node.value);
+        }
+        Self { values }
+    }
+
+    pub fn check(&mut self, world: &World) -> Result<(), String> {
+        let mut new_values = vec![];
+        for node in &world.nodes {
+            new_values.push(node.value);
+        }
+        if new_values.len() != self.values.len() {
+            return Err(format!(
+                "Different value vector lengths! {} vs {}",
+                self.values.len(),
+                new_values.len(),
+            ));
+        }
+        for (node_idx, (&new_value, &old_value)) in new_values.iter().zip(&self.values).enumerate()
+        {
+            if new_value < old_value {
+                return Err(format!(
+                    "Node values decreas! Node {}: {} -> {}",
+                    node_idx, old_value, new_value
+                ));
+            }
+            if world.agenda.is_empty() && new_value != new_values[0] {
+                return Err(format!(
+                    "Agenda is empty and values are not equal! Node values: {:?}",
+                    new_values
+                ));
+            }
+        }
+        self.values = new_values;
+        Ok(())
+    }
 }
 
 impl World {
@@ -96,7 +143,8 @@ impl World {
             agenda: BinaryHeap::new(),
             trace: vec![],
             nodes,
-            generator: XorShiftRng { state: seed + 730 },
+            generator: XorShiftRng { state: seed },
+            seed,
             config,
         }
     }
@@ -134,10 +182,35 @@ impl World {
         }
     }
 
-    pub fn run(&mut self, until: u64) {
+    pub fn run(&mut self, until: u64, max_steps: u32, checker: &mut Checker) -> Result<(), String> {
+        let mut step_idx = 1;
         while !self.agenda.is_empty() && self.agenda.peek().unwrap().0.0 <= until {
+            if step_idx > max_steps {
+                return Err(format!(
+                    "Over the step budget at time {} ms! {} more elements are in the agenda.",
+                    self.now_ms,
+                    self.agenda.len(),
+                ));
+            }
+
             let _ = self.step();
+            // if !checker.check(self) {
+            //     return false;
+            // }
+            if let Err(message) = checker.check(self) {
+                return Err(format!(
+                    "seed: {}, max_delay: {}, drop_percent: {}, time: {}, step {}: {}",
+                    self.seed,
+                    self.config.max_delay,
+                    self.config.drop_percent,
+                    self.now_ms,
+                    step_idx,
+                    message
+                ));
+            }
+            step_idx += 1;
         }
+        Ok(())
     }
 
     pub fn insert_into_agenda(&mut self, due_time: u64, event: Event) {
@@ -268,23 +341,22 @@ mod tests {
             max_delay: 300,
             drop_percent: 20,
         };
-        let mut world1 = World::new(42, config);
-        let mut world2 = World::new(42, config);
-        let mut world3 = World::new(45, config);
-        world1.insert_into_agenda(100, Event::TimerFired { node: 2 });
-        world2.insert_into_agenda(100, Event::TimerFired { node: 2 });
-        world3.insert_into_agenda(100, Event::TimerFired { node: 2 });
+        let mut worlds: Vec<World> = Vec::new();
 
-        world1.run(1000);
-        world2.run(1000);
-        world3.run(1000);
+        worlds.push(World::new(22, config));
+        worlds.push(World::new(22, config));
+        worlds.push(World::new(25, config));
 
-        assert_eq!(world1.trace, world2.trace);
-        assert_ne!(world1.trace, world3.trace);
-        assert_ne!(world2.trace, world3.trace);
-        // assert_eq!(world.nodes[1].value, 5);
-        // assert_eq!(world.nodes[2].value, 5);
-        assert!(world1.agenda.is_empty());
+        for world in &mut worlds {
+            let mut checker = Checker::new(world);
+            world.insert_into_agenda(100, Event::TimerFired { node: 2 });
+            let _ = world.run(10000, 1000, &mut checker);
+        }
+
+        assert_eq!(worlds[0].trace, worlds[1].trace);
+        assert_ne!(worlds[1].trace, worlds[2].trace);
+        assert_ne!(worlds[0].trace, worlds[2].trace);
+        assert!(worlds[0].agenda.is_empty());
     }
 
     #[test]
@@ -298,10 +370,60 @@ mod tests {
         world1.insert_into_agenda(100, Event::TimerFired { node: 1 });
         world1.insert_into_agenda(100, Event::TimerFired { node: 2 });
 
-        world1.run(10000);
+        let mut checker = Checker::new(&world1);
+
+        let outcome = world1.run(10000, 1000, &mut checker);
+        assert!(outcome.is_ok(), "{}", outcome.unwrap_err());
 
         assert_eq!(world1.nodes[1].value, 5);
         assert_eq!(world1.nodes[2].value, 5);
         assert_eq!(world1.nodes[0].value, 5);
+    }
+
+    #[test]
+    fn seed_sweep_no_drop() {
+        let config = ScenarioConfig {
+            max_delay: 300,
+            drop_percent: 0,
+        };
+        for seed in 1..1000 {
+            let mut world = World::new(seed, config);
+            world.insert_into_agenda(100, Event::TimerFired { node: 2 });
+
+            let mut checker = Checker::new(&world);
+
+            let outcome = world.run(10000, 1000, &mut checker);
+            assert!(outcome.is_ok(), "{}", outcome.unwrap_err());
+        }
+    }
+
+    #[test]
+    fn seed_sweep_high_drop() {
+        let config = ScenarioConfig {
+            max_delay: 300,
+            drop_percent: 10,
+        };
+
+        let mut count_error_seeds = 0;
+
+        for seed in 1..1000 {
+            let mut world = World::new(seed, config);
+            world.insert_into_agenda(100, Event::TimerFired { node: 2 });
+
+            let mut checker = Checker::new(&world);
+
+            let outcome = world.run(10000, 1000, &mut checker);
+            if outcome.is_err() {
+                count_error_seeds += 1;
+            }
+        }
+        println!(
+            "Percentage of seeds that produce an error on a {}% drop seed sweep with {} ms delay: {} / 1000 = {}%!",
+            config.drop_percent,
+            config.max_delay,
+            count_error_seeds,
+            (count_error_seeds as f64) / 1000.0
+        );
+        assert!(count_error_seeds > 0);
     }
 }
