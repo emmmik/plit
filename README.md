@@ -5,10 +5,7 @@ algorithm](https://raft.github.io/) for leader election and log replication.
 Three nodes with a crash-fault model. The name is
 Ukrainian: *пліт* [plit] — "raft".
 
-The testing is the point: plit is built **simulation-first**. The
-protocol core does no I/O and gets driven by a deterministic, seeded event
-scheduler, with a hand-written linearizability checker as an important
-deliverable.
+The testing is the point: plit is built simulation-first. The protocol core does no I/O and gets driven by a deterministic, seeded event scheduler. Safety checkers (monotonic commit, agreement at quiescence) are already written; a full linearizability checker is the next deliverable.
 
 ## What must plit guarantee
 
@@ -51,7 +48,7 @@ expected to recover.
 plit does not defend against malicious nodes — we trust the hardware because
 we own it. This is a crash-fault, honest-nodes assumption, and it is exactly
 why **3 nodes are sufficient**. A Byzantine fault-tolerant system would need
-at least 7.
+at least 4.
 
 ### Asynchronous networks, no delivery deadlines
 
@@ -98,6 +95,19 @@ global agenda, dispatched by one deterministic loop.
   configuration: a correct configuration stays clean across the sweep, and
   injected faults (message loss and friends) surface as reproducible seeds
   instead of flaky failures.
+
+## Running
+
+```bash
+cargo test -p simsim
+```
+
+Six tests drive the harness: event formatting, a single dispatch step,
+run-to-quiescence determinism (the same seed produces a byte-identical
+trace), and two seed sweeps — one clean, one with message loss, where every
+failure is reported as a reproducible seed.
+
+`raftd` is a placeholder until leader election lands.
 
 ## Status
 
