@@ -62,6 +62,7 @@ impl Checker<Node> for GossipChecker {
                 new_values.len(),
             ));
         }
+        println!("{:?}", world.drops);
         for (node_idx, (&new_value, &old_value)) in new_values.iter().zip(&self.values).enumerate()
         {
             if new_value < old_value {
@@ -107,6 +108,7 @@ mod tests {
         let config = ScenarioConfig {
             max_delay: 10,
             drop_percent: 0,
+            preseed_size: 1000,
         };
         let mut world = World::new(43, config, build_nodes());
 
@@ -154,6 +156,7 @@ mod tests {
         let config = ScenarioConfig {
             max_delay: 300,
             drop_percent: 20,
+            preseed_size: 1000,
         };
         let mut worlds: Vec<World<Node>> = Vec::new();
 
@@ -178,6 +181,7 @@ mod tests {
         let config = ScenarioConfig {
             max_delay: 300,
             drop_percent: 0,
+            preseed_size: 1000,
         };
         let mut world1 = World::new(42, config, build_nodes());
         world1.insert_into_agenda(100, Event::TimerFired { node: 0 });
@@ -199,6 +203,7 @@ mod tests {
         let config = ScenarioConfig {
             max_delay: 300,
             drop_percent: 0,
+            preseed_size: 10000,
         };
         for seed in 1..1000 {
             let mut world = World::new(seed, config, build_nodes());
@@ -216,6 +221,7 @@ mod tests {
         let config = ScenarioConfig {
             max_delay: 300,
             drop_percent: 10,
+            preseed_size: 1000,
         };
 
         let mut count_error_seeds = 0;
@@ -246,6 +252,7 @@ mod tests {
         let config = ScenarioConfig {
             max_delay: 300,
             drop_percent: 20,
+            preseed_size: 1000,
         };
 
         let mut world = World::new(22, config, build_nodes());
@@ -262,6 +269,7 @@ mod tests {
         let config = ScenarioConfig {
             max_delay: 300,
             drop_percent: 20,
+            preseed_size: 1000,
         };
 
         let mut world = World::new(22, config, build_nodes());

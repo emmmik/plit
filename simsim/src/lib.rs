@@ -1,5 +1,9 @@
 pub mod gossip;
-use std::{cmp::Reverse, collections::BinaryHeap, fmt::Debug};
+use std::{
+    cmp::Reverse,
+    collections::{BinaryHeap, VecDeque},
+    fmt::Debug,
+};
 
 #[derive(Debug, PartialEq, Clone, Copy, Eq, Ord, PartialOrd)]
 pub enum Event<M> {
@@ -46,7 +50,10 @@ pub struct World<N: Protocol> {
     nodes: Vec<N>,
     last_timer_id: Vec<u64>,
     ghost_timer_cnt: Vec<u64>,
-    generator: XorShiftRng,
+    // generator: XorShiftRng,
+    node_timeouts: VecDeque<VecDeque<u64>>,
+    delays: VecDeque<u64>,
+    drops: VecDeque<bool>,
     seed: u64,
     config: ScenarioConfig,
 }
@@ -57,6 +64,35 @@ where
 {
     pub fn new(seed: u64, config: ScenarioConfig, nodes: Vec<N>) -> Self {
         let n = nodes.len();
+        let mut generator = XorShiftRng { state: seed };
+
+        // Order: node timeouts (0..n) -> delays -> drops -> ...
+
+        let mut node_timeouts = VecDeque::new();
+        for _ in 0..n {
+            let mut current_timeouts = VecDeque::new();
+            for _ in 0..config.preseed_size {
+                let next_timeout = generator.next_state();
+                current_timeouts.push_back(next_timeout);
+            }
+            node_timeouts.push_back(current_timeouts);
+        }
+
+        let mut delays = VecDeque::new();
+        for _ in 0..config.preseed_size {
+            delays.push_back(generator.next_state() % config.max_delay + 1);
+        }
+
+        let mut drops = VecDeque::new();
+        for _ in 0..config.preseed_size {
+            let current_drop = generator.next_state() % 100;
+            if current_drop >= config.drop_percent {
+                drops.push_back(false);
+            } else {
+                drops.push_back(true);
+            }
+        }
+
         Self {
             now_ms: 0,
             next_event_id: 0,
@@ -65,7 +101,10 @@ where
             nodes,
             last_timer_id: vec![0; n],
             ghost_timer_cnt: vec![0; n],
-            generator: XorShiftRng { state: seed },
+            // generator: XorShiftRng { state: seed },
+            node_timeouts,
+            delays,
+            drops,
             seed,
             config,
         }
@@ -89,9 +128,16 @@ where
                 let action_node = next_event.target_node();
                 let new_actions = self.nodes[action_node as usize].handle(&next_event);
                 for action in new_actions {
-                    let is_dropped = self.generator.next_state() % 100;
-                    if is_dropped >= self.config.drop_percent {
-                        self.handle_action(action_node, action);
+                    let is_dropped = self.drops.pop_front();
+                    match is_dropped {
+                        Some(value) => {
+                            if !value {
+                                self.handle_action(action_node, action);
+                            }
+                        }
+                        None => {
+                            panic!("The preseeded drops vector is exhausted!");
+                        }
                     }
                 }
 
@@ -156,8 +202,15 @@ where
                     msg,
                 };
                 // A demo delay in delivery time is put for testing
-                let delay = self.generator.next_state() % self.config.max_delay + 1;
-                self.insert_into_agenda(self.now_ms + delay, new_event);
+                let delay = self.delays.pop_front();
+                match delay {
+                    Some(value) => {
+                        self.insert_into_agenda(self.now_ms + value, new_event);
+                    }
+                    None => {
+                        panic!("The preseeded delays vector is exhausted");
+                    }
+                }
             }
         }
     }
@@ -200,6 +253,7 @@ pub fn print_event_list(events: &[(u64, Event<u64>)]) {
 pub struct ScenarioConfig {
     max_delay: u64,
     drop_percent: u64,
+    preseed_size: usize,
 }
 
 #[cfg(test)]
