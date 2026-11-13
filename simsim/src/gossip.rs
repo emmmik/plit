@@ -256,4 +256,43 @@ mod tests {
 
         print_event_list(&world.trace);
     }
+
+    #[test]
+    fn latest_timer() {
+        let config = ScenarioConfig {
+            max_delay: 300,
+            drop_percent: 20,
+        };
+
+        let mut world = World::new(22, config, build_nodes());
+        let mut checker = GossipChecker::new(&world);
+
+        world.insert_into_agenda(100, Event::TimerFired { node: 2 });
+        world.insert_into_agenda(
+            10,
+            Event::MessageDelivered {
+                from: 0,
+                to: 1,
+                msg: 10,
+            },
+        );
+        let _ = world.step();
+        world.insert_into_agenda(200, Event::TimerFired { node: 2 });
+        let _ = world.run(1000, 10, &mut checker);
+
+        println!("{:#?}", world.trace);
+
+        assert_eq!(world.ghost_timer_cnt[2], 1);
+
+        assert!(world.trace.contains(&(200, Event::TimerFired { node: 2 })));
+        assert!(!world.trace.contains(&(100, Event::TimerFired { node: 2 })));
+
+        // What's supposed to happen:
+        // 0 ms; node 2: wake me up at 100
+        // 10 ms; something happens -> node 2: wake me up at 200
+        // 100 ms; node 2 doesn't get pinged
+        // trace: (10, something happens) -> ... -> NOTHING fires at 100 for 2 -> ... -> (200, TimerFired for 2)
+        // node 2: 1 ghost
+        // Note: "something happens" is only to skip time at the start
+    }
 }

@@ -44,6 +44,8 @@ pub struct World<N: Protocol> {
     agenda: BinaryHeap<Reverse<(u64, u64, Event<N::Msg>)>>,
     trace: Vec<(u64, Event<N::Msg>)>,
     nodes: Vec<N>,
+    last_timer_id: Vec<u64>,
+    ghost_timer_cnt: Vec<u64>,
     generator: XorShiftRng,
     seed: u64,
     config: ScenarioConfig,
@@ -54,12 +56,15 @@ where
     N::Msg: Ord,
 {
     pub fn new(seed: u64, config: ScenarioConfig, nodes: Vec<N>) -> Self {
+        let n = nodes.len();
         Self {
             now_ms: 0,
             next_event_id: 0,
             agenda: BinaryHeap::new(),
             trace: vec![],
             nodes,
+            last_timer_id: vec![0; n],
+            ghost_timer_cnt: vec![0; n],
             generator: XorShiftRng { state: seed },
             seed,
             config,
@@ -70,7 +75,15 @@ where
         match self.agenda.is_empty() {
             false => {
                 let Reverse(agenda_element) = self.agenda.pop().unwrap();
-                let (due_time, _, next_event) = agenda_element;
+                let (due_time, id, next_event) = agenda_element;
+
+                if let Event::TimerFired { node } = next_event {
+                    if id < self.last_timer_id[node as usize] {
+                        self.ghost_timer_cnt[node as usize] += 1;
+                        return Ok(());
+                    }
+                }
+
                 self.now_ms = due_time;
 
                 let action_node = next_event.target_node();
@@ -127,6 +140,9 @@ where
 
     pub fn insert_into_agenda(&mut self, due_time: u64, event: Event<N::Msg>) {
         self.next_event_id += 1;
+        if let Event::TimerFired { node } = event {
+            self.last_timer_id[node as usize] = self.next_event_id;
+        }
         self.agenda
             .push(Reverse((due_time, self.next_event_id, event)));
     }
