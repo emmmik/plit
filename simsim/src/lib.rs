@@ -1,26 +1,10 @@
 pub mod gossip;
+use raft_core::{Action, Event, Protocol};
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, VecDeque},
     fmt::Debug,
 };
-
-#[derive(Debug, PartialEq, Clone, Copy, Eq, Ord, PartialOrd)]
-pub enum Event<M> {
-    MessageDelivered { from: u32, to: u32, msg: M },
-    TimerFired { node: u32 },
-}
-
-#[derive(Clone, Copy)]
-pub enum Action<M> {
-    Send { to: u32, msg: M },
-}
-
-pub trait Protocol {
-    type Msg;
-
-    fn handle(&mut self, e: &Event<Self::Msg>) -> Vec<Action<Self::Msg>>;
-}
 
 pub trait Checker<N: Protocol> {
     fn check(&mut self, world: &World<N>) -> Result<(), String>;
@@ -216,28 +200,19 @@ where
     }
 }
 
-impl<T> Event<T> {
-    pub fn target_node(&self) -> u32 {
-        match self {
-            Event::TimerFired { node } => *node,
-            Event::MessageDelivered { from, to, msg } => *to,
+fn return_formatted_event<M>(event: &Event<M>) -> String
+where
+    M: Debug,
+{
+    match event {
+        Event::MessageDelivered { from, to, msg } => {
+            format!(
+                "A message was delivered from node {} to node {} with value {:?}. ",
+                from, to, msg
+            )
         }
-    }
-
-    pub fn return_formatted_event(&self) -> String
-    where
-        T: Debug,
-    {
-        match self {
-            Event::MessageDelivered { from, to, msg } => {
-                format!(
-                    "A message was delivered from node {} to node {} with value {:?}. ",
-                    from, to, msg
-                )
-            }
-            Event::TimerFired { node } => {
-                format!("The timer has fired on node {}. ", node)
-            }
+        Event::TimerFired { node } => {
+            format!("The timer has fired on node {}. ", node)
         }
     }
 }
@@ -245,7 +220,7 @@ impl<T> Event<T> {
 pub fn print_event_list(events: &[(u64, Event<u64>)]) {
     for (now_ms, event) in events.iter() {
         println!("The time is: {}", now_ms);
-        println!("{}", event.return_formatted_event());
+        println!("{}", return_formatted_event(event));
     }
 }
 
@@ -272,7 +247,7 @@ mod harness_tests {
         ];
         let mut events_string: String = String::new();
         for i in events.iter() {
-            events_string.push_str(&i.return_formatted_event());
+            events_string.push_str(&return_formatted_event(i));
         }
         assert_eq!(
             events_string,

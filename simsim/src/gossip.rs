@@ -1,4 +1,5 @@
-use crate::{Action, Checker, Event, Protocol, World};
+use crate::{Checker, World};
+use raft_core::{Action, Event, Protocol};
 
 #[derive(Debug)]
 pub struct Node {
@@ -62,7 +63,7 @@ impl Checker<Node> for GossipChecker {
                 new_values.len(),
             ));
         }
-        println!("{:?}", world.drops);
+        // println!("{:?}", world.drops);
         for (node_idx, (&new_value, &old_value)) in new_values.iter().zip(&self.values).enumerate()
         {
             if new_value < old_value {

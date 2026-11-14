@@ -2,13 +2,15 @@
 running 1 test
 The time is: 100
 The timer has fired on node 2. 
-The time is: 104
-A message was delivered from node 2 to node 1 with value 5. 
-The time is: 131
-A message was delivered from node 1 to node 2 with value 5. 
-The time is: 190
+The time is: 226
 A message was delivered from node 2 to node 0 with value 5. 
-The time is: 369
+The time is: 310
+A message was delivered from node 2 to node 1 with value 5. 
+The time is: 324
+A message was delivered from node 0 to node 1 with value 5. 
+The time is: 392
+A message was delivered from node 0 to node 2 with value 5. 
+The time is: 487
 A message was delivered from node 1 to node 0 with value 5. 
 test gossip::tests::baseline_seed ... ok
 
