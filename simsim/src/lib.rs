@@ -217,11 +217,18 @@ where
     }
 }
 
-pub fn print_event_list(events: &[(u64, Event<u64>)]) {
+pub fn return_event_list(events: &[(u64, Event<u64>)]) -> String {
+    let mut event_list = String::new();
     for (now_ms, event) in events.iter() {
-        println!("The time is: {}", now_ms);
-        println!("{}", return_formatted_event(event));
+        // println!("The time is: {}", now_ms);
+        // println!("{}", return_formatted_event(event));
+        event_list += &format!(
+            "The time is: {}\n{}\n",
+            now_ms,
+            return_formatted_event(event)
+        );
     }
+    event_list
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -102,7 +102,8 @@ pub fn build_nodes() -> Vec<Node> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ScenarioConfig, print_event_list};
+    use crate::{ScenarioConfig, return_event_list};
+    use std::fs;
 
     #[test]
     fn world_step() {
@@ -262,7 +263,27 @@ mod tests {
 
         let _ = world.run(1000, 10, &mut checker);
 
-        print_event_list(&world.trace);
+        let comparison_string = return_event_list(&world.trace);
+        assert_eq!(comparison_string, include_str!("../baseline_seed22.txt"));
+    }
+
+    #[test]
+    #[ignore = "dump test for the baseline seed"]
+    fn baseline_dump() {
+        let config = ScenarioConfig {
+            max_delay: 300,
+            drop_percent: 20,
+            preseed_size: 1000,
+        };
+
+        let mut world = World::new(22, config, build_nodes());
+        world.insert_into_agenda(100, Event::TimerFired { node: 2 });
+        let mut checker = GossipChecker::new(&world);
+
+        let _ = world.run(1000, 10, &mut checker);
+
+        fs::write("./baseline_seed22.txt", return_event_list(&world.trace))
+            .expect("Error writing to baseline file!");
     }
 
     #[test]
