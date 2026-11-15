@@ -29,7 +29,7 @@ impl<T> Event<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Role {
     Follower,
     Candidate,
@@ -38,7 +38,7 @@ pub enum Role {
 
 #[derive(Debug)]
 pub struct RaftNode {
-    role: Role,
+    pub role: Role,
     current_term: u64,
     voted_for: Option<u32>,
     // log
@@ -46,7 +46,19 @@ pub struct RaftNode {
     peers: Vec<u32>,
 }
 
-#[derive(Clone, Copy)]
+impl RaftNode {
+    pub fn new(peers: Vec<u32>) -> Self {
+        Self {
+            role: Role::Follower,
+            current_term: 0,
+            voted_for: None,
+            votes: 0,
+            peers,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Debug)]
 pub enum RPC {
     AppendEntries {
         term: u64,
@@ -71,7 +83,7 @@ impl Protocol for RaftNode {
         match event {
             Event::TimerFired { node } => {
                 if let Role::Leader = self.role {
-                    panic!("Error: Timer fired on the leader!");
+                    return vec![];
                 }
 
                 // Regardless if the node is a candidate or a follower, a new election has to be
@@ -110,7 +122,7 @@ impl Protocol for RaftNode {
                 RPC::RequestVote { term, candidate_id } => {
                     let mut actions = vec![];
 
-                    if term <= &self.current_term
+                    if term < &self.current_term
                         || (term == &self.current_term && self.voted_for.is_some())
                     {
                         actions.push(Action::Send {
@@ -188,24 +200,16 @@ impl Protocol for RaftNode {
 }
 
 impl RaftNode {
-    fn push_to_peers(&self, actions: &mut Vec<Action<RPC>>, msg: RPC) {
+    pub fn push_to_peers(&self, actions: &mut Vec<Action<RPC>>, msg: RPC) {
         for &peer in &self.peers {
             actions.push(Action::Send { to: peer, msg });
         }
     }
 
-    fn start_timeout(&self, actions: &mut Vec<Action<RPC>>) {
+    pub fn start_timeout(&self, actions: &mut Vec<Action<RPC>>) {
         actions.push(Action::SetTimer {
             min_delay: MIN_ELECTION_TIMEOUT,
             max_delay: MAX_ELECTION_TIMEOUT,
         });
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn raft_election() {}
 }

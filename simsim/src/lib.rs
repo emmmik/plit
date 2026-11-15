@@ -1,5 +1,5 @@
 pub mod gossip;
-use raft_core::{Action, Event, Protocol};
+use raft_core::{Action, Event, Protocol, RaftNode, Role};
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, VecDeque},
@@ -192,7 +192,27 @@ where
                         self.insert_into_agenda(self.now_ms + value, new_event);
                     }
                     None => {
-                        panic!("The preseeded delays vector is exhausted");
+                        panic!("The preseeded delays vector is exhausted!");
+                    }
+                }
+            }
+            Action::SetTimer {
+                min_delay,
+                max_delay,
+            } => {
+                let raw_timeout = self.node_timeouts[node as usize].pop_front();
+                match raw_timeout {
+                    Some(value) => {
+                        self.insert_into_agenda(
+                            self.now_ms + (min_delay + value % (max_delay - min_delay)),
+                            Event::TimerFired { node },
+                        );
+                    }
+                    None => {
+                        panic!(
+                            "The preseeded timeout vector for node {} is exhausted!",
+                            &node
+                        );
                     }
                 }
             }
@@ -238,6 +258,38 @@ pub struct ScenarioConfig {
     preseed_size: usize,
 }
 
+#[derive(Debug)]
+pub struct LinearChecker {}
+
+impl LinearChecker {
+    pub fn new(world: &World<RaftNode>) -> Self {
+        Self {}
+    }
+}
+impl Checker<RaftNode> for LinearChecker {
+    fn check(&mut self, world: &World<RaftNode>) -> Result<(), String> {
+        let mut cnt_leaders = 0;
+        for node in &world.nodes {
+            if node.role == Role::Leader {
+                cnt_leaders += 1;
+            }
+        }
+
+        if cnt_leaders > 1 {
+            return Err(format!("There are {} leaders!", cnt_leaders));
+        }
+        Ok(())
+    }
+}
+
+pub fn build_raft_nodes() -> Vec<RaftNode> {
+    vec![
+        RaftNode::new(vec![1, 2]),
+        RaftNode::new(vec![0, 2]),
+        RaftNode::new(vec![0, 1]),
+    ]
+}
+
 #[cfg(test)]
 mod harness_tests {
     use super::*;
@@ -260,5 +312,57 @@ mod harness_tests {
             events_string,
             "A message was delivered from node 1 to node 2 with value 10. The timer has fired on node 3. "
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raft_election() {
+        let config = ScenarioConfig {
+            max_delay: 30,
+            drop_percent: 20,
+            preseed_size: 1000,
+        };
+
+        let mut world = World::new(43, config, build_raft_nodes());
+        let mut checker = LinearChecker::new(&world);
+
+        world.handle_action(
+            0,
+            Action::SetTimer {
+                min_delay: 150,
+                max_delay: 300,
+            },
+        );
+        world.handle_action(
+            1,
+            Action::SetTimer {
+                min_delay: 150,
+                max_delay: 300,
+            },
+        );
+        world.handle_action(
+            2,
+            Action::SetTimer {
+                min_delay: 150,
+                max_delay: 300,
+            },
+        );
+        // world.insert_into_agenda(0, Event::TimerFired { node: 0 });
+        // world.insert_into_agenda(1, Event::TimerFired { node: 1 });
+        // world.insert_into_agenda(1, Event::TimerFired { node: 2 });
+
+        let _ = world.run(1000, 10, &mut checker);
+
+        println!("{:#?}", world.trace);
+        for node in world.nodes.iter() {
+            println!("{:?}", node);
+        }
+
+        // world.nodes[1].role = Role::Leader;
+        assert_eq!(checker.check(&world), Ok(()));
     }
 }
