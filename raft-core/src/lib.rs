@@ -39,7 +39,7 @@ pub enum Role {
 #[derive(Debug)]
 pub struct RaftNode {
     pub role: Role,
-    current_term: u64,
+    pub current_term: u64,
     voted_for: Option<u32>,
     // log
     votes: u32,

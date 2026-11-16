@@ -322,9 +322,9 @@ mod tests {
     #[test]
     fn raft_election() {
         let config = ScenarioConfig {
-            max_delay: 30,
-            drop_percent: 20,
-            preseed_size: 1000,
+            max_delay: 20,
+            drop_percent: 0,
+            preseed_size: 10000,
         };
 
         let mut world = World::new(43, config, build_raft_nodes());
@@ -355,14 +355,27 @@ mod tests {
         // world.insert_into_agenda(1, Event::TimerFired { node: 1 });
         // world.insert_into_agenda(1, Event::TimerFired { node: 2 });
 
-        let _ = world.run(1000, 10, &mut checker);
+        let _ = world.run(2000, 100, &mut checker);
 
-        println!("{:#?}", world.trace);
+        println!("{:?}", world.trace);
         for node in world.nodes.iter() {
             println!("{:?}", node);
         }
 
-        // world.nodes[1].role = Role::Leader;
+        // world.nodes[0].role = Role::Leader;
         assert_eq!(checker.check(&world), Ok(()));
+
+        let mut leader_cnt = 0;
+        let mut leader_term = 0;
+
+        for node in world.nodes.iter() {
+            if node.role == Role::Leader {
+                leader_cnt += 1;
+                leader_term = node.current_term;
+            }
+        }
+
+        assert_eq!(leader_cnt, 1);
+        assert!(leader_term > 0);
     }
 }
