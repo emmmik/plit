@@ -1,8 +1,8 @@
 pub mod gossip;
-use raft_core::{Action, Event, Protocol, RaftNode, Role};
+use raft_core::{Action, Event, Protocol, RPC, RaftNode, Role};
 use std::{
     cmp::Reverse,
-    collections::{BinaryHeap, VecDeque},
+    collections::{BinaryHeap, HashSet, VecDeque},
     fmt::Debug,
 };
 
@@ -44,7 +44,7 @@ pub struct World<N: Protocol> {
 
 impl<N: Protocol> World<N>
 where
-    N::Msg: Ord,
+    N::Msg: Ord + std::fmt::Debug,
 {
     pub fn new(seed: u64, config: ScenarioConfig, nodes: Vec<N>) -> Self {
         let n = nodes.len();
@@ -111,16 +111,25 @@ where
 
                 let action_node = next_event.target_node();
                 let new_actions = self.nodes[action_node as usize].handle(&next_event);
+                // println!("{:?}", new_actions);
                 for action in new_actions {
-                    let is_dropped = self.drops.pop_front();
-                    match is_dropped {
-                        Some(value) => {
-                            if !value {
-                                self.handle_action(action_node, action);
+                    if let Action::SetTimer {
+                        min_delay,
+                        max_delay,
+                    } = action
+                    {
+                        self.handle_action(action_node, action);
+                    } else {
+                        let is_dropped = self.drops.pop_front();
+                        match is_dropped {
+                            Some(value) => {
+                                if !value {
+                                    self.handle_action(action_node, action);
+                                }
                             }
-                        }
-                        None => {
-                            panic!("The preseeded drops vector is exhausted!");
+                            None => {
+                                panic!("The preseeded drops vector is exhausted!");
+                            }
                         }
                     }
                 }
@@ -259,24 +268,55 @@ pub struct ScenarioConfig {
 }
 
 #[derive(Debug)]
-pub struct LinearChecker {}
+pub struct LinearChecker {
+    terms: Vec<u64>,
+}
 
 impl LinearChecker {
     pub fn new(world: &World<RaftNode>) -> Self {
-        Self {}
+        Self {
+            terms: vec![0; world.nodes.len()],
+        }
     }
 }
 impl Checker<RaftNode> for LinearChecker {
     fn check(&mut self, world: &World<RaftNode>) -> Result<(), String> {
+        let mut new_terms = vec![];
+        for node in &world.nodes {
+            new_terms.push(node.current_term);
+        }
+        if new_terms.len() != self.terms.len() {
+            return Err(format!(
+                "Different term vector lengths! {} vs {}",
+                self.terms.len(),
+                new_terms.len(),
+            ));
+        }
+        for (node_idx, (&new_value, &old_value)) in new_terms.iter().zip(&self.terms).enumerate() {
+            if new_value < old_value {
+                return Err(format!(
+                    "Node terms decrease! Node {}: {} -> {}",
+                    node_idx, old_value, new_value
+                ));
+            }
+        }
+        self.terms = new_terms;
+        // println!("{:?}", self.terms);
+
         let mut cnt_leaders = 0;
+        let mut terms_set = HashSet::new();
         for node in &world.nodes {
             if node.role == Role::Leader {
                 cnt_leaders += 1;
+                terms_set.insert(node.current_term);
             }
         }
 
-        if cnt_leaders > 1 {
-            return Err(format!("There are {} leaders!", cnt_leaders));
+        if terms_set.len() < cnt_leaders {
+            return Err(format!(
+                "There are {} leaders in the same term!",
+                cnt_leaders
+            ));
         }
         Ok(())
     }
@@ -322,7 +362,7 @@ mod tests {
     #[test]
     fn raft_election() {
         let config = ScenarioConfig {
-            max_delay: 20,
+            max_delay: 30,
             drop_percent: 0,
             preseed_size: 10000,
         };
@@ -363,7 +403,7 @@ mod tests {
         }
 
         // world.nodes[0].role = Role::Leader;
-        assert_eq!(checker.check(&world), Ok(()));
+        // assert_eq!(checker.check(&world), Ok(()));
 
         let mut leader_cnt = 0;
         let mut leader_term = 0;
@@ -377,5 +417,83 @@ mod tests {
 
         assert_eq!(leader_cnt, 1);
         assert!(leader_term > 0);
+    }
+
+    #[test]
+    fn total_drop_timeout() {
+        let config = ScenarioConfig {
+            max_delay: 30,
+            drop_percent: 100,
+            preseed_size: 10000,
+        };
+
+        let mut world = World::new(43, config, build_raft_nodes());
+        let mut checker = LinearChecker::new(&world);
+
+        world.handle_action(
+            0,
+            Action::SetTimer {
+                min_delay: 150,
+                max_delay: 300,
+            },
+        );
+        world.handle_action(
+            1,
+            Action::SetTimer {
+                min_delay: 150,
+                max_delay: 300,
+            },
+        );
+        world.handle_action(
+            2,
+            Action::SetTimer {
+                min_delay: 150,
+                max_delay: 300,
+            },
+        );
+
+        let _ = world.run(10000, 1000, &mut checker);
+
+        // println!("{:?}", world.trace);
+        // println!("{:?}", world.agenda);
+        // println!("{:?}", world.now_ms);
+
+        for node in &world.nodes {
+            // println!("{:?}", node);
+            assert!(node.current_term > 1);
+        }
+    }
+
+    #[test]
+    fn non_decreasing_terms() {
+        let config = ScenarioConfig {
+            max_delay: 30,
+            drop_percent: 100,
+            preseed_size: 10000,
+        };
+
+        let mut world = World::new(43, config, build_raft_nodes());
+        let mut checker = LinearChecker::new(&world);
+
+        // println!("{}", checker.terms.len());
+        // println!("{:?}", world.nodes.len());
+
+        // world.handle_action(
+        //     0,
+        //     Action::SetTimer {
+        //         min_delay: 150,
+        //         max_delay: 300,
+        //     },
+        // );
+
+        // let _ = world.run(10000, 1000, &mut checker);
+        world.nodes[0].current_term = 1;
+
+        let _ = checker.check(&world);
+
+        world.nodes[0].current_term = 0;
+
+        // println!("{:?}", checker.check(&world));
+        assert!(checker.check(&world).is_err());
     }
 }

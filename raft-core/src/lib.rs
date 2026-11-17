@@ -8,7 +8,7 @@ pub enum Event<M> {
     TimerFired { node: u32 },
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Action<M> {
     Send { to: u32, msg: M },
     SetTimer { min_delay: u64, max_delay: u64 },
@@ -91,6 +91,7 @@ impl Protocol for RaftNode {
                 self.role = Role::Candidate;
 
                 self.current_term += 1;
+                // self.current_term = 1;
                 self.voted_for = Some(*node);
                 self.votes = 1;
 
@@ -116,6 +117,7 @@ impl Protocol for RaftNode {
                 //     });
                 // }
 
+                // println!("{:#?}", actions);
                 actions
             }
             Event::MessageDelivered { from, to, msg } => match msg {
