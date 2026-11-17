@@ -5,12 +5,14 @@ use std::collections::HashSet;
 #[derive(Debug)]
 pub struct ElectionSafetyChecker {
     terms: Vec<u64>,
+    voters: Vec<HashSet<u32>>,
 }
 
 impl ElectionSafetyChecker {
     pub fn new(world: &World<RaftNode>) -> Self {
         Self {
             terms: vec![0; world.nodes.len()],
+            voters: vec![HashSet::new(); world.nodes.len()],
         }
     }
 }
@@ -28,6 +30,9 @@ impl Checker<RaftNode> for ElectionSafetyChecker {
             ));
         }
         for (node_idx, (&new_value, &old_value)) in new_terms.iter().zip(&self.terms).enumerate() {
+            if new_value != old_value {
+                self.voters[node_idx].clear();
+            }
             if new_value < old_value {
                 return Err(format!(
                     "Node terms decrease! Node {}: {} -> {}",
@@ -40,8 +45,14 @@ impl Checker<RaftNode> for ElectionSafetyChecker {
 
         let mut cnt_leaders = 0;
         let mut terms_set = HashSet::new();
-        for node in &world.nodes {
+        for (node_idx, node) in world.nodes.iter().enumerate() {
             if node.role == Role::Leader {
+                if self.voters[node_idx].len() < world.nodes.len() / 2 {
+                    return Err(format!(
+                        "The leader {} didn't get sufficient votes! Voters: {:?}",
+                        node_idx, self.voters[node_idx]
+                    ));
+                }
                 cnt_leaders += 1;
                 terms_set.insert(node.current_term);
             }
@@ -53,6 +64,7 @@ impl Checker<RaftNode> for ElectionSafetyChecker {
                 cnt_leaders
             ));
         }
+
         Ok(())
     }
 }
@@ -84,13 +96,31 @@ mod tests {
 
         world.nodes[0].role = Role::Leader;
         world.nodes[0].current_term = 1;
+        checker.terms[0] = 1;
+        checker.voters[0] = HashSet::from([1]);
 
         world.nodes[1].role = Role::Leader;
         world.nodes[1].current_term = 1;
+        checker.terms[1] = 1;
+        checker.voters[1] = HashSet::from([2]);
 
         assert!(checker.check(&world).is_err());
 
-        world.nodes[0].current_term = 2;
+        checker = ElectionSafetyChecker::new(&world);
+
+        world.nodes[0].role = Role::Leader;
+        world.nodes[0].current_term = 1;
+        checker.terms[0] = 1;
+        checker.voters[0] = HashSet::from([1]);
+
+        world.nodes[1].role = Role::Leader;
+        world.nodes[1].current_term = 2;
+        checker.terms[1] = 2;
+        checker.voters[1] = HashSet::from([2]);
+
+        if let Err(message) = checker.check(&world) {
+            println!("{}", message);
+        }
 
         assert!(checker.check(&world).is_ok());
     }
