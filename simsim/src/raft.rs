@@ -1,5 +1,5 @@
 use crate::{Checker, World};
-use raft_core::{RaftNode, Role};
+use raft_core::{Event, RPC, RaftNode, Role};
 use std::collections::HashSet;
 
 #[derive(Debug)]
@@ -42,6 +42,23 @@ impl Checker<RaftNode> for ElectionSafetyChecker {
         }
         self.terms = new_terms;
         // println!("{:?}", self.terms);
+
+        if let Some((
+            _,
+            Event::MessageDelivered {
+                from,
+                to,
+                msg:
+                    RPC::RequestVoteReply {
+                        term,
+                        vote_granted: true,
+                    },
+            },
+        )) = world.trace.last()
+            && self.terms[*to as usize] == *term
+        {
+            self.voters[*to as usize].insert(*from);
+        }
 
         let mut cnt_leaders = 0;
         let mut terms_set = HashSet::new();
