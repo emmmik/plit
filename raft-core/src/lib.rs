@@ -1,5 +1,6 @@
 const MIN_ELECTION_TIMEOUT: u64 = 150;
 const MAX_ELECTION_TIMEOUT: u64 = 300;
+const HEARTBEAT_TIMEOUT: u64 = 50;
 const NODE_NUMBER: u32 = 3;
 
 #[derive(Debug, PartialEq, Clone, Copy, Eq, Ord, PartialOrd)]
@@ -83,7 +84,21 @@ impl Protocol for RaftNode {
         match event {
             Event::TimerFired { node } => {
                 if let Role::Leader = self.role {
-                    return vec![];
+                    let mut actions = vec![];
+                    actions.push(Action::SetTimer {
+                        min_delay: HEARTBEAT_TIMEOUT,
+                        max_delay: HEARTBEAT_TIMEOUT,
+                    });
+                    self.push_to_peers(
+                        &mut actions,
+                        RPC::AppendEntries {
+                            term: self.current_term,
+                        },
+                    );
+
+                    return actions;
+
+                    // return vec![];
                 }
 
                 // Regardless if the node is a candidate or a follower, a new election has to be

@@ -2,7 +2,7 @@ pub mod gossip;
 pub mod raft;
 use raft_core::{Action, Event, Protocol};
 use std::{
-    cmp::Reverse,
+    cmp::{Reverse, max},
     collections::{BinaryHeap, VecDeque},
     fmt::Debug,
 };
@@ -210,6 +210,10 @@ where
                 min_delay,
                 max_delay,
             } => {
+                if min_delay == max_delay {
+                    self.insert_into_agenda(self.now_ms + min_delay, Event::TimerFired { node });
+                    return;
+                }
                 let raw_timeout = self.node_timeouts[node as usize].pop_front();
                 match raw_timeout {
                     Some(value) => {

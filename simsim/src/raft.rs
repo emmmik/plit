@@ -257,6 +257,9 @@ mod tests {
 
             let _ = world.run(10000, 1000, &mut checker);
 
+            // if seed == 1 {
+            //     dbg!(world.trace);
+            // }
             assert!(checker.total_leaders > 0);
         }
     }
