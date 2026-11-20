@@ -1,12 +1,13 @@
 use crate::{Checker, World};
 use raft_core::{Action, Event, RPC, RaftNode, Role};
-use std::collections::HashSet;
+use std::{cmp::max, collections::HashSet};
 
 #[derive(Debug)]
 pub struct ElectionSafetyChecker {
     terms: Vec<u64>,
     voters: Vec<HashSet<u32>>,
     total_leaders: u64,
+    highest_seen_term: u64,
 }
 
 impl ElectionSafetyChecker {
@@ -15,6 +16,7 @@ impl ElectionSafetyChecker {
             terms: vec![0; world.nodes.len()],
             voters: vec![HashSet::new(); world.nodes.len()],
             total_leaders: 0,
+            highest_seen_term: 0,
         }
     }
 }
@@ -62,8 +64,12 @@ impl Checker<RaftNode> for ElectionSafetyChecker {
             self.voters[*to as usize].insert(*from);
         }
 
+        // Leader count and the respective term set among those leaders. If there are more leaders
+        // than their "shared" terms, then at least 2 leaders have the same term, which breaks the
+        // election safty property
         let mut cnt_leaders = 0;
         let mut terms_set = HashSet::new();
+
         for (node_idx, node) in world.nodes.iter().enumerate() {
             if node.role == Role::Leader {
                 if self.voters[node_idx].len() < world.nodes.len() / 2 {
@@ -75,6 +81,7 @@ impl Checker<RaftNode> for ElectionSafetyChecker {
                 cnt_leaders += 1;
                 terms_set.insert(node.current_term);
             }
+            self.highest_seen_term = max(self.highest_seen_term, node.current_term);
         }
 
         if terms_set.len() < cnt_leaders {
@@ -261,6 +268,11 @@ mod tests {
             //     dbg!(world.trace);
             // }
             assert!(checker.total_leaders > 0);
+
+            // WARNING!: Could plausibly fail with another generator configuration
+            // Fix: check the value without heartbeats and increase the upper bound with
+            // heartbeats accordingly
+            assert!(checker.highest_seen_term < 20);
         }
     }
 
@@ -294,6 +306,11 @@ mod tests {
             let _ = world.run(10000, 1000, &mut checker);
 
             assert!(checker.total_leaders > 0);
+
+            // WARNING!: Could plausibly fail with another generator configuration
+            // Fix: check the value without heartbeats and increase the upper bound with
+            // heartbeats accordingly
+            assert!(checker.highest_seen_term < 20);
         }
     }
 
