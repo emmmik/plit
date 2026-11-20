@@ -6,6 +6,7 @@ use std::collections::HashSet;
 pub struct ElectionSafetyChecker {
     terms: Vec<u64>,
     voters: Vec<HashSet<u32>>,
+    total_leaders: u64,
 }
 
 impl ElectionSafetyChecker {
@@ -13,6 +14,7 @@ impl ElectionSafetyChecker {
         Self {
             terms: vec![0; world.nodes.len()],
             voters: vec![HashSet::new(); world.nodes.len()],
+            total_leaders: 0,
         }
     }
 }
@@ -82,6 +84,7 @@ impl Checker<RaftNode> for ElectionSafetyChecker {
             ));
         }
 
+        self.total_leaders += cnt_leaders as u64;
         Ok(())
     }
 }
@@ -237,9 +240,57 @@ mod tests {
             let mut checker = ElectionSafetyChecker::new(&world);
 
             let outcome = world.run(1000, 1000, &mut checker);
-            // dbg!(world.trace);
-            // dbg!(seed);
+
             assert!(outcome.is_ok(), "{}", outcome.unwrap_err());
+        }
+
+        let config = ScenarioConfig {
+            max_delay: 10,
+            drop_percent: 0,
+            preseed_size: 10000,
+        };
+        for seed in 1..1000 {
+            let mut world = World::new(seed, config, build_raft_nodes());
+            start_raft_sim(&mut world);
+
+            let mut checker = ElectionSafetyChecker::new(&world);
+
+            let _ = world.run(10000, 1000, &mut checker);
+
+            assert!(checker.total_leaders > 0);
+        }
+    }
+
+    #[test]
+    fn seed_sweep_high_drop() {
+        let config = ScenarioConfig {
+            max_delay: 300,
+            drop_percent: 10,
+            preseed_size: 10000,
+        };
+        for seed in 1..1000 {
+            let mut world = World::new(seed, config, build_raft_nodes());
+            start_raft_sim(&mut world);
+
+            let mut checker = ElectionSafetyChecker::new(&world);
+
+            let outcome = world.run(10000, 10000, &mut checker);
+            assert!(outcome.is_ok(), "{}", outcome.unwrap_err());
+        }
+        let config = ScenarioConfig {
+            max_delay: 10,
+            drop_percent: 10,
+            preseed_size: 10000,
+        };
+        for seed in 1..1000 {
+            let mut world = World::new(seed, config, build_raft_nodes());
+            start_raft_sim(&mut world);
+
+            let mut checker = ElectionSafetyChecker::new(&world);
+
+            let _ = world.run(10000, 1000, &mut checker);
+
+            assert!(checker.total_leaders > 0);
         }
     }
 
