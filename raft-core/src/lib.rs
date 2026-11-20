@@ -42,7 +42,7 @@ pub struct RaftNode {
     pub current_term: u64,
     voted_for: Option<u32>,
     // log
-    votes: u32,
+    pub votes: u32,
     peers: Vec<u32>,
 }
 
@@ -168,25 +168,26 @@ impl Protocol for RaftNode {
                         return actions;
                     }
 
-                    if *vote_granted {
+                    if *term == self.current_term && *vote_granted {
                         self.votes += 1;
+                        if self.votes > NODE_NUMBER / 2 {
+                            self.role = Role::Leader;
+
+                            self.push_to_peers(
+                                &mut actions,
+                                RPC::AppendEntries {
+                                    term: self.current_term,
+                                    // leader_id: node,
+                                },
+                            );
+                        }
                     }
-
-                    if self.votes > NODE_NUMBER / 2 {
-                        self.role = Role::Leader;
-
-                        self.push_to_peers(
-                            &mut actions,
-                            RPC::AppendEntries {
-                                term: self.current_term,
-                                // leader_id: node,
-                            },
-                        );
-                    }
-
                     actions
                 }
                 RPC::AppendEntries { term } => {
+                    if *term < self.current_term {
+                        return vec![];
+                    }
                     let mut actions = vec![];
 
                     self.role = Role::Follower;

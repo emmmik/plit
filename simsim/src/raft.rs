@@ -1,5 +1,5 @@
 use crate::{Checker, World};
-use raft_core::{Event, RPC, RaftNode, Role};
+use raft_core::{Action, Event, RPC, RaftNode, Role};
 use std::collections::HashSet;
 
 #[derive(Debug)]
@@ -94,11 +94,34 @@ pub fn build_raft_nodes() -> Vec<RaftNode> {
     ]
 }
 
+pub fn start_raft_sim(world: &mut World<RaftNode>) {
+    world.handle_action(
+        0,
+        Action::SetTimer {
+            min_delay: 150,
+            max_delay: 300,
+        },
+    );
+    world.handle_action(
+        1,
+        Action::SetTimer {
+            min_delay: 150,
+            max_delay: 300,
+        },
+    );
+    world.handle_action(
+        2,
+        Action::SetTimer {
+            min_delay: 150,
+            max_delay: 300,
+        },
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ScenarioConfig;
-    use raft_core::Action;
 
     #[test]
     fn raft_election() {
@@ -153,27 +176,7 @@ mod tests {
         let mut world = World::new(43, config, build_raft_nodes());
         let mut checker = ElectionSafetyChecker::new(&world);
 
-        world.handle_action(
-            0,
-            Action::SetTimer {
-                min_delay: 150,
-                max_delay: 300,
-            },
-        );
-        world.handle_action(
-            1,
-            Action::SetTimer {
-                min_delay: 150,
-                max_delay: 300,
-            },
-        );
-        world.handle_action(
-            2,
-            Action::SetTimer {
-                min_delay: 150,
-                max_delay: 300,
-            },
-        );
+        start_raft_sim(&mut world);
 
         let _ = world.run(10000, 1000, &mut checker);
 
@@ -218,5 +221,60 @@ mod tests {
 
         // println!("{:?}", checker.check(&world));
         assert!(checker.check(&world).is_err());
+    }
+
+    #[test]
+    fn seed_sweep_no_drop() {
+        let config = ScenarioConfig {
+            max_delay: 300,
+            drop_percent: 0,
+            preseed_size: 10000,
+        };
+        for seed in 1..1000 {
+            let mut world = World::new(seed, config, build_raft_nodes());
+            start_raft_sim(&mut world);
+
+            let mut checker = ElectionSafetyChecker::new(&world);
+
+            let outcome = world.run(1000, 1000, &mut checker);
+            // dbg!(world.trace);
+            // dbg!(seed);
+            assert!(outcome.is_ok(), "{}", outcome.unwrap_err());
+        }
+    }
+
+    #[test]
+    fn false_term_leader_grant() {
+        // When a node (candidate or not) receives a reply (positive or negative), if the vote count
+        // is stale (wasn't reset from one of previous terms), it shouldn't be granted leader
+
+        let config = ScenarioConfig {
+            max_delay: 300,
+            drop_percent: 0,
+            preseed_size: 10000,
+        };
+
+        let mut world = World::new(1, config, build_raft_nodes());
+        let mut checker = ElectionSafetyChecker::new(&world);
+
+        world.nodes[0].current_term = 1;
+        world.nodes[1].current_term = 2;
+        world.nodes[2].current_term = 2;
+
+        world.nodes[0].votes = 2;
+
+        world.insert_into_agenda(
+            100,
+            Event::MessageDelivered {
+                from: 1,
+                to: 0,
+                msg: RPC::RequestVoteReply {
+                    term: 1,
+                    vote_granted: false,
+                },
+            },
+        );
+        let _ = world.run(1000, 100, &mut checker);
+        assert!(world.nodes[0].role != Role::Leader);
     }
 }
