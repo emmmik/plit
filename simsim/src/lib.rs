@@ -2,7 +2,7 @@ pub mod gossip;
 pub mod raft;
 use raft_core::{Action, Event, Protocol};
 use std::{
-    cmp::{Reverse, max},
+    cmp::Reverse,
     collections::{BinaryHeap, VecDeque},
     fmt::Debug,
 };
@@ -43,7 +43,7 @@ pub struct World<N: Protocol> {
     config: ScenarioConfig,
 }
 
-impl<N: Protocol> World<N>
+impl<N: Protocol + std::fmt::Debug> World<N>
 where
     N::Msg: Ord + std::fmt::Debug,
 {
@@ -230,6 +230,25 @@ where
                     }
                 }
             }
+            Action::Persist {
+                current_term,
+                voted_for,
+            } => {
+                self.insert_into_agenda(
+                    self.now_ms + 10,
+                    Event::StatePersisted {
+                        node,
+                        current_term,
+                        voted_for,
+                    },
+                );
+            }
+        }
+    }
+    pub fn debug_trace(&self) {
+        let start = self.trace.len().saturating_sub(20);
+        for (i, (_due_time, event)) in self.trace[start..].iter().enumerate() {
+            println!("{}) {}", i + 1, return_formatted_event(event));
         }
     }
 }
@@ -247,6 +266,16 @@ where
         }
         Event::TimerFired { node } => {
             format!("The timer has fired on node {}. ", node)
+        }
+        Event::StatePersisted {
+            node,
+            current_term,
+            voted_for,
+        } => {
+            format!(
+                "Stare was persisted on node {}: currentTerm = {}, votedFor = {}",
+                node, current_term, voted_for
+            )
         }
     }
 }

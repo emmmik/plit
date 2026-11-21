@@ -33,6 +33,13 @@ impl Protocol for Node {
                 }
                 actions
             }
+            Event::StatePersisted {
+                node,
+                current_term,
+                voted_for,
+            } => {
+                vec![]
+            }
         }
     }
 }
@@ -310,7 +317,7 @@ mod tests {
         world.insert_into_agenda(200, Event::TimerFired { node: 2 });
         let _ = world.run(1000, 10, &mut checker);
 
-        println!("{:#?}", world.trace);
+        // println!("{:#?}", world.trace);
 
         assert_eq!(world.ghost_timer_cnt[2], 1);
 

@@ -21,3 +21,7 @@
 - `nextIndex[]` - redundant to keep as it will be recomputed by the `AppendEntries RPCs`
 
 - `matchIndex[]` - same as `nextIndex`, can be recomputed on `AppendEntries RPCs` replies
+
+## Disk Persistence
+
+For simplicity (meaning not going into bare metal), the simulation's disk completes writes for a node in the same order as they are issued with a constant delay.

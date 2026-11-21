@@ -5,14 +5,26 @@ const NODE_NUMBER: u32 = 3;
 
 #[derive(Debug, PartialEq, Clone, Copy, Eq, Ord, PartialOrd)]
 pub enum Event<M> {
-    MessageDelivered { from: u32, to: u32, msg: M },
-    TimerFired { node: u32 },
+    MessageDelivered {
+        from: u32,
+        to: u32,
+        msg: M,
+    },
+    TimerFired {
+        node: u32,
+    },
+    StatePersisted {
+        node: u32,
+        current_term: u64,
+        voted_for: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum Action<M> {
     Send { to: u32, msg: M },
     SetTimer { min_delay: u64, max_delay: u64 },
+    Persist { current_term: u64, voted_for: u32 },
 }
 
 pub trait Protocol {
@@ -26,6 +38,11 @@ impl<T> Event<T> {
         match self {
             Event::TimerFired { node } => *node,
             Event::MessageDelivered { from, to, msg } => *to,
+            Event::StatePersisted {
+                node,
+                current_term,
+                voted_for,
+            } => *node,
         }
     }
 }
@@ -159,15 +176,22 @@ impl Protocol for RaftNode {
 
                     self.start_timeout(&mut actions);
 
-                    actions.push(Action::Send {
-                        to: *candidate_id,
-                        msg: RPC::RequestVoteReply {
-                            term: self.current_term,
-                            vote_granted: true,
-                        },
+                    actions.push(Action::Persist {
+                        current_term: *term,
+                        voted_for: *candidate_id,
                     });
 
                     actions
+
+                    // actions.push(Action::Send {
+                    //     to: *candidate_id,
+                    //     msg: RPC::RequestVoteReply {
+                    //         term: self.current_term,
+                    //         vote_granted: true,
+                    //     },
+                    // });
+                    //
+                    // actions
                 }
                 RPC::RequestVoteReply { term, vote_granted } => {
                     let mut actions = vec![];
@@ -183,7 +207,7 @@ impl Protocol for RaftNode {
                         return actions;
                     }
 
-                    if *term == self.current_term && *vote_granted {
+                    if *term == self.current_term && *vote_granted && self.role == Role::Candidate {
                         self.votes += 1;
                         if self.votes > NODE_NUMBER / 2 {
                             self.role = Role::Leader;
@@ -205,14 +229,37 @@ impl Protocol for RaftNode {
                     }
                     let mut actions = vec![];
 
-                    self.role = Role::Follower;
-                    self.current_term = *term;
+                    if *term > self.current_term {
+                        self.role = Role::Follower;
+                        self.current_term = *term;
+                        self.votes = 0;
+                        self.voted_for = None;
+                    }
 
+                    // println!("{:?}", &self);
                     self.start_timeout(&mut actions);
 
                     actions
                 }
             },
+            Event::StatePersisted {
+                node,
+                current_term,
+                voted_for,
+            } => {
+                if self.current_term != *current_term || self.voted_for != Some(*voted_for) {
+                    return vec![];
+                }
+                let actions = vec![Action::Send {
+                    to: *voted_for,
+                    msg: RPC::RequestVoteReply {
+                        term: *current_term,
+                        vote_granted: true,
+                    },
+                }];
+
+                actions
+            }
         }
     }
 }

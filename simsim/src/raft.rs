@@ -131,7 +131,7 @@ pub fn start_raft_sim(world: &mut World<RaftNode>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ScenarioConfig;
+    use crate::{ScenarioConfig, return_formatted_event};
 
     #[test]
     fn raft_election() {
@@ -168,9 +168,9 @@ mod tests {
         checker.terms[1] = 2;
         checker.voters[1] = HashSet::from([2]);
 
-        if let Err(message) = checker.check(&world) {
-            println!("{}", message);
-        }
+        // if let Err(message) = checker.check(&world) {
+        //     println!("{}", message);
+        // }
 
         assert!(checker.check(&world).is_ok());
     }
@@ -264,9 +264,6 @@ mod tests {
 
             let _ = world.run(10000, 1000, &mut checker);
 
-            // if seed == 1 {
-            //     dbg!(world.trace);
-            // }
             assert!(checker.total_leaders > 0);
 
             // WARNING!: Could plausibly fail with another generator configuration
@@ -290,6 +287,13 @@ mod tests {
             let mut checker = ElectionSafetyChecker::new(&world);
 
             let outcome = world.run(10000, 10000, &mut checker);
+
+            // if seed == 226 {
+            //     world.trace.last_chunk::<20>());
+            // }
+            if outcome.is_err() {
+                world.debug_trace();
+            }
             assert!(outcome.is_ok(), "{}", outcome.unwrap_err());
         }
         let config = ScenarioConfig {
@@ -348,4 +352,9 @@ mod tests {
         let _ = world.run(1000, 100, &mut checker);
         assert!(world.nodes[0].role != Role::Leader);
     }
+
+    // To test:
+    // - if a node became a follower and got a positive RequestVoteReply, it can't be promoted to
+    // leader, as the leader for the term has already been elected
+    // -
 }
