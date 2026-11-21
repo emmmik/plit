@@ -33,11 +33,7 @@ impl Protocol for Node {
                 }
                 actions
             }
-            Event::StatePersisted {
-                node,
-                current_term,
-                voted_for,
-            } => {
+            _ => {
                 vec![]
             }
         }
@@ -118,6 +114,10 @@ mod tests {
             max_delay: 10,
             drop_percent: 0,
             preseed_size: 1000,
+            until: 10000,
+            max_steps: 1000,
+            node_count: 3,
+            seed_crashes: false,
         };
         let mut world = World::new(43, config, build_nodes());
 
@@ -166,6 +166,10 @@ mod tests {
             max_delay: 300,
             drop_percent: 20,
             preseed_size: 1000,
+            until: 10000,
+            max_steps: 1000,
+            node_count: 3,
+            seed_crashes: false,
         };
         let mut worlds: Vec<World<Node>> = Vec::new();
 
@@ -176,7 +180,7 @@ mod tests {
         for world in &mut worlds {
             let mut checker = GossipChecker::new(world);
             world.insert_into_agenda(100, Event::TimerFired { node: 2 });
-            let _ = world.run(10000, 1000, &mut checker);
+            let _ = world.run(&mut checker);
         }
 
         assert_eq!(worlds[0].trace, worlds[1].trace);
@@ -191,6 +195,10 @@ mod tests {
             max_delay: 300,
             drop_percent: 0,
             preseed_size: 1000,
+            until: 10000,
+            max_steps: 1000,
+            node_count: 3,
+            seed_crashes: false,
         };
         let mut world1 = World::new(42, config, build_nodes());
         world1.insert_into_agenda(100, Event::TimerFired { node: 0 });
@@ -199,7 +207,7 @@ mod tests {
 
         let mut checker = GossipChecker::new(&world1);
 
-        let outcome = world1.run(10000, 1000, &mut checker);
+        let outcome = world1.run(&mut checker);
         assert!(outcome.is_ok(), "{}", outcome.unwrap_err());
 
         assert_eq!(world1.nodes[1].value, 5);
@@ -213,6 +221,10 @@ mod tests {
             max_delay: 300,
             drop_percent: 0,
             preseed_size: 10000,
+            until: 10000,
+            max_steps: 1000,
+            node_count: 3,
+            seed_crashes: false,
         };
         for seed in 1..1000 {
             let mut world = World::new(seed, config, build_nodes());
@@ -220,7 +232,7 @@ mod tests {
 
             let mut checker = GossipChecker::new(&world);
 
-            let outcome = world.run(10000, 1000, &mut checker);
+            let outcome = world.run(&mut checker);
             assert!(outcome.is_ok(), "{}", outcome.unwrap_err());
         }
     }
@@ -231,6 +243,10 @@ mod tests {
             max_delay: 300,
             drop_percent: 10,
             preseed_size: 1000,
+            until: 10000,
+            max_steps: 1000,
+            node_count: 3,
+            seed_crashes: false,
         };
 
         let mut count_error_seeds = 0;
@@ -241,7 +257,7 @@ mod tests {
 
             let mut checker = GossipChecker::new(&world);
 
-            let outcome = world.run(10000, 1000, &mut checker);
+            let outcome = world.run(&mut checker);
             if outcome.is_err() {
                 count_error_seeds += 1;
             }
@@ -262,13 +278,17 @@ mod tests {
             max_delay: 300,
             drop_percent: 20,
             preseed_size: 1000,
+            until: 1000,
+            max_steps: 10,
+            node_count: 3,
+            seed_crashes: false,
         };
 
         let mut world = World::new(22, config, build_nodes());
         world.insert_into_agenda(100, Event::TimerFired { node: 2 });
         let mut checker = GossipChecker::new(&world);
 
-        let _ = world.run(1000, 10, &mut checker);
+        let _ = world.run(&mut checker);
 
         let comparison_string = return_event_list(&world.trace);
         assert_eq!(comparison_string, include_str!("../baseline_seed22.txt"));
@@ -281,13 +301,17 @@ mod tests {
             max_delay: 300,
             drop_percent: 20,
             preseed_size: 1000,
+            until: 1000,
+            max_steps: 10,
+            node_count: 3,
+            seed_crashes: false,
         };
 
         let mut world = World::new(22, config, build_nodes());
         world.insert_into_agenda(100, Event::TimerFired { node: 2 });
         let mut checker = GossipChecker::new(&world);
 
-        let _ = world.run(1000, 10, &mut checker);
+        let _ = world.run(&mut checker);
 
         fs::write("./baseline_seed22.txt", return_event_list(&world.trace))
             .expect("Error writing to baseline file!");
@@ -299,6 +323,10 @@ mod tests {
             max_delay: 300,
             drop_percent: 20,
             preseed_size: 1000,
+            until: 1000,
+            max_steps: 10,
+            node_count: 3,
+            seed_crashes: false,
         };
 
         let mut world = World::new(22, config, build_nodes());
@@ -315,7 +343,7 @@ mod tests {
         );
         let _ = world.step();
         world.insert_into_agenda(200, Event::TimerFired { node: 2 });
-        let _ = world.run(1000, 10, &mut checker);
+        let _ = world.run(&mut checker);
 
         // println!("{:#?}", world.trace);
 

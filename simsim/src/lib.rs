@@ -4,7 +4,7 @@ use raft_core::{Action, Event, Protocol};
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, VecDeque},
-    fmt::Debug,
+    fmt::{Debug, format},
 };
 
 pub trait Checker<N: Protocol> {
@@ -27,18 +27,27 @@ impl XorShiftRng {
     }
 }
 
+#[derive(Clone)]
+pub struct NodeState {
+    current_term: u64,
+    voted_for: Option<u32>,
+}
+
 pub struct World<N: Protocol> {
     now_ms: u64,
     next_event_id: u64,
     agenda: BinaryHeap<Reverse<(u64, u64, Event<N::Msg>)>>,
     trace: Vec<(u64, Event<N::Msg>)>,
     nodes: Vec<N>,
+    node_states: Vec<NodeState>,
+    node_is_up: Vec<bool>,
     last_timer_id: Vec<u64>,
     ghost_timer_cnt: Vec<u64>,
     // generator: XorShiftRng,
     node_timeouts: VecDeque<VecDeque<u64>>,
     delays: VecDeque<u64>,
     drops: VecDeque<bool>,
+    node_downtimes: VecDeque<u64>,
     seed: u64,
     config: ScenarioConfig,
 }
@@ -78,28 +87,77 @@ where
             }
         }
 
-        Self {
+        // First crash should be anywhere between 500 and 2000 ms to ensure that something actually
+        // happened before the first crash
+        let mut crash_time = 500 + generator.next_state() % (2000 - 500);
+        let mut crashes = vec![];
+        let mut node_downtimes = VecDeque::new();
+
+        while crash_time < config.until {
+            let crashed_node = (generator.next_state() as u32) % config.node_count;
+
+            // The downtime should be 1 - 3 full election timeouts, so the cluster can still try
+            // electing without it
+            let downtime = 300 + generator.next_state() % (800 - 300);
+            node_downtimes.push_back(downtime);
+
+            // The gap between crashes should be 3 - 5 election timeouts, so each crash is at a
+            // different time of an electino
+            let crash_gap = 800 + generator.next_state() % (1500 - 800);
+
+            crashes.push((crash_time, crashed_node, downtime));
+
+            crash_time += crash_gap;
+        }
+
+        let node_states = vec![
+            NodeState {
+                current_term: 0,
+                voted_for: None,
+            };
+            n
+        ];
+
+        let mut world = Self {
             now_ms: 0,
             next_event_id: 0,
             agenda: BinaryHeap::new(),
             trace: vec![],
             nodes,
+            node_states,
+            node_is_up: vec![true; n],
             last_timer_id: vec![0; n],
             ghost_timer_cnt: vec![0; n],
             // generator: XorShiftRng { state: seed },
             node_timeouts,
             delays,
             drops,
+            node_downtimes,
             seed,
             config,
+        };
+        if !config.seed_crashes {
+            return world;
         }
+        for (crash_time, crashed_node, _) in crashes {
+            world.insert_into_agenda(crash_time, Event::NodeCrashed { node: crashed_node });
+
+            // world.insert_into_agenda(
+            //     crash_time + downtime,
+            //     Event::NodeRestarted {
+            //         node: crashed_node as u32,
+            //     },
+            // );
+        }
+
+        world
     }
 
     pub fn step(&mut self) -> Result<(), &'static str> {
         match self.agenda.is_empty() {
             false => {
                 let Reverse(agenda_element) = self.agenda.pop().unwrap();
-                let (due_time, id, next_event) = agenda_element;
+                let (due_time, id, mut next_event) = agenda_element;
 
                 if let Event::TimerFired { node } = next_event {
                     if id < self.last_timer_id[node as usize] {
@@ -110,13 +168,88 @@ where
 
                 self.now_ms = due_time;
 
+                // Node crash handling
+                if let Event::NodeCrashed { node } = next_event {
+                    if !self.node_is_up[node as usize] {
+                        return Ok(());
+                    }
+                    // println!("NODE {node} CRASHED");
+                    self.node_is_up[node as usize] = false;
+                    let downtime = self
+                        .node_downtimes
+                        .pop_front()
+                        .expect("The preseeded node_downtimes vector is exhausted!");
+                    self.insert_into_agenda(
+                        self.now_ms + downtime,
+                        Event::NodeRestarted {
+                            node,
+                            current_term: self.node_states[node as usize].current_term,
+                            voted_for: self.node_states[node as usize].voted_for,
+                        },
+                    );
+                    self.trace.push((due_time, next_event));
+                    return Ok(());
+                }
+
+                // match next_event {
+                //     Event::NodeCrashed { node } => {
+                //         self.node_states[node].is_up = false;
+                //         self.trace.push();
+                //     }
+                //     Event::NodeRestarted { node } => {
+                //         self.node_states[node].is_up = true;
+                //         let action_node = next_event.target_node();
+                //         let
+                //     }
+                // }
+                //
                 let action_node = next_event.target_node();
+
+                if let Event::NodeRestarted {
+                    node,
+                    current_term,
+                    voted_for,
+                } = next_event
+                {
+                    self.node_is_up[node as usize] = true;
+
+                    // The event must be rebuilt, as if any updates were written to the disk while
+                    // the node was down, it is still guaranteed that they have been persisted
+                    next_event = Event::NodeRestarted {
+                        node,
+                        current_term: self.node_states[node as usize].current_term,
+                        voted_for: self.node_states[node as usize].voted_for,
+                    };
+                }
+
+                if let Event::StatePersisted {
+                    node,
+                    current_term,
+                    voted_for,
+                    kind,
+                } = next_event
+                {
+                    self.node_states[node as usize].current_term = current_term;
+                    self.node_states[node as usize].voted_for = voted_for;
+                }
+
+                if !self.node_is_up[action_node as usize] {
+                    return Ok(());
+                }
+
                 let new_actions = self.nodes[action_node as usize].handle(&next_event);
                 // println!("{:?}", new_actions);
                 for action in new_actions {
                     if let Action::SetTimer {
                         min_delay,
                         max_delay,
+                    } = action
+                    {
+                        self.handle_action(action_node, action);
+                    } else if let Action::Persist {
+                        current_term,
+                        voted_for,
+                        kind,
                     } = action
                     {
                         self.handle_action(action_node, action);
@@ -142,15 +275,10 @@ where
         }
     }
 
-    pub fn run(
-        &mut self,
-        until: u64,
-        max_steps: u32,
-        checker: &mut impl Checker<N>,
-    ) -> Result<(), String> {
+    pub fn run(&mut self, checker: &mut impl Checker<N>) -> Result<(), String> {
         let mut step_idx = 1;
-        while !self.agenda.is_empty() && self.agenda.peek().unwrap().0.0 <= until {
-            if step_idx > max_steps {
+        while !self.agenda.is_empty() && self.agenda.peek().unwrap().0.0 <= self.config.until {
+            if step_idx > self.config.max_steps {
                 return Err(format!(
                     "Over the step budget at time {} ms! {} more elements are in the agenda.",
                     self.now_ms,
@@ -233,6 +361,7 @@ where
             Action::Persist {
                 current_term,
                 voted_for,
+                kind,
             } => {
                 self.insert_into_agenda(
                     self.now_ms + 10,
@@ -240,13 +369,14 @@ where
                         node,
                         current_term,
                         voted_for,
+                        kind,
                     },
                 );
             }
         }
     }
     pub fn debug_trace(&self) {
-        let start = self.trace.len().saturating_sub(20);
+        let start = self.trace.len().saturating_sub(30);
         for (i, (_due_time, event)) in self.trace[start..].iter().enumerate() {
             println!("{}) {}", i + 1, return_formatted_event(event));
         }
@@ -271,9 +401,23 @@ where
             node,
             current_term,
             voted_for,
+            kind,
         } => {
             format!(
-                "Stare was persisted on node {}: currentTerm = {}, votedFor = {}",
+                "State was persisted on node {}: currentTerm = {}, votedFor = {:?}",
+                node, current_term, voted_for
+            )
+        }
+        Event::NodeCrashed { node } => {
+            format!("Node {} has crashed", node)
+        }
+        Event::NodeRestarted {
+            node,
+            current_term,
+            voted_for,
+        } => {
+            format!(
+                "Node {} has restarted: currentTerm = {}, votedFor = {:?}",
                 node, current_term, voted_for
             )
         }
@@ -285,6 +429,7 @@ pub fn return_event_list(events: &[(u64, Event<u64>)]) -> String {
     for (now_ms, event) in events.iter() {
         // println!("The time is: {}", now_ms);
         // println!("{}", return_formatted_event(event));
+
         event_list += &format!(
             "The time is: {}\n{}\n",
             now_ms,
@@ -298,7 +443,11 @@ pub fn return_event_list(events: &[(u64, Event<u64>)]) -> String {
 pub struct ScenarioConfig {
     max_delay: u64,
     drop_percent: u64,
+    until: u64,
+    max_steps: u32,
     preseed_size: usize,
+    node_count: u32,
+    seed_crashes: bool,
 }
 
 #[cfg(test)]

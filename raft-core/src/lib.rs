@@ -16,15 +16,35 @@ pub enum Event<M> {
     StatePersisted {
         node: u32,
         current_term: u64,
-        voted_for: u32,
+        voted_for: Option<u32>,
+        // kind = false-if not for vote grant; kind = true if for vote grant
+        kind: bool,
+    },
+    NodeCrashed {
+        node: u32,
+    },
+    NodeRestarted {
+        node: u32,
+        current_term: u64,
+        voted_for: Option<u32>,
     },
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum Action<M> {
-    Send { to: u32, msg: M },
-    SetTimer { min_delay: u64, max_delay: u64 },
-    Persist { current_term: u64, voted_for: u32 },
+    Send {
+        to: u32,
+        msg: M,
+    },
+    SetTimer {
+        min_delay: u64,
+        max_delay: u64,
+    },
+    Persist {
+        current_term: u64,
+        voted_for: Option<u32>,
+        kind: bool,
+    },
 }
 
 pub trait Protocol {
@@ -39,6 +59,13 @@ impl<T> Event<T> {
             Event::TimerFired { node } => *node,
             Event::MessageDelivered { from, to, msg } => *to,
             Event::StatePersisted {
+                node,
+                current_term,
+                voted_for,
+                kind,
+            } => *node,
+            Event::NodeCrashed { node } => *node,
+            Event::NodeRestarted {
                 node,
                 current_term,
                 voted_for,
@@ -134,6 +161,7 @@ impl Protocol for RaftNode {
 
                 let mut actions = vec![];
 
+                self.persist(&mut actions, self.current_term, self.voted_for, false);
                 self.start_timeout(&mut actions);
                 self.push_to_peers(&mut actions, request_vote_rpc);
 
@@ -176,10 +204,11 @@ impl Protocol for RaftNode {
 
                     self.start_timeout(&mut actions);
 
-                    actions.push(Action::Persist {
-                        current_term: *term,
-                        voted_for: *candidate_id,
-                    });
+                    // actions.push(Action::Persist {
+                    //     current_term: *term,
+                    //     voted_for: *candidate_id,
+                    // });
+                    self.persist(&mut actions, *term, Some(*candidate_id), true);
 
                     actions
 
@@ -202,6 +231,7 @@ impl Protocol for RaftNode {
                         self.role = Role::Follower;
                         self.votes = 0;
 
+                        self.persist(&mut actions, *term, None, false);
                         self.start_timeout(&mut actions);
 
                         return actions;
@@ -234,6 +264,7 @@ impl Protocol for RaftNode {
                         self.current_term = *term;
                         self.votes = 0;
                         self.voted_for = None;
+                        self.persist(&mut actions, *term, None, false);
                     }
 
                     // println!("{:?}", &self);
@@ -246,12 +277,14 @@ impl Protocol for RaftNode {
                 node,
                 current_term,
                 voted_for,
+                kind,
             } => {
-                if self.current_term != *current_term || self.voted_for != Some(*voted_for) {
+                if !kind || self.current_term != *current_term || self.voted_for != *voted_for {
                     return vec![];
                 }
+                let voted_for = voted_for.expect("RequestVoteReply recepient undefined!");
                 let actions = vec![Action::Send {
-                    to: *voted_for,
+                    to: voted_for,
                     msg: RPC::RequestVoteReply {
                         term: *current_term,
                         vote_granted: true,
@@ -259,6 +292,24 @@ impl Protocol for RaftNode {
                 }];
 
                 actions
+            }
+            Event::NodeRestarted {
+                node,
+                current_term,
+                voted_for,
+            } => {
+                self.current_term = *current_term;
+                self.voted_for = *voted_for;
+                self.role = Role::Follower;
+                self.votes = 0;
+
+                let mut actions = vec![];
+                self.start_timeout(&mut actions);
+
+                actions
+            }
+            Event::NodeCrashed { node } => {
+                panic!("NodeCrashed handling inside raft-core!");
             }
         }
     }
@@ -275,6 +326,20 @@ impl RaftNode {
         actions.push(Action::SetTimer {
             min_delay: MIN_ELECTION_TIMEOUT,
             max_delay: MAX_ELECTION_TIMEOUT,
+        });
+    }
+
+    pub fn persist(
+        &self,
+        actions: &mut Vec<Action<RPC>>,
+        current_term: u64,
+        voted_for: Option<u32>,
+        kind: bool,
+    ) {
+        actions.push(Action::Persist {
+            current_term,
+            voted_for,
+            kind,
         });
     }
 }
