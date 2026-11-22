@@ -141,13 +141,6 @@ where
         }
         for (crash_time, crashed_node, _) in crashes {
             world.insert_into_agenda(crash_time, Event::NodeCrashed { node: crashed_node });
-
-            // world.insert_into_agenda(
-            //     crash_time + downtime,
-            //     Event::NodeRestarted {
-            //         node: crashed_node as u32,
-            //     },
-            // );
         }
 
         world
@@ -173,7 +166,6 @@ where
                     if !self.node_is_up[node as usize] {
                         return Ok(());
                     }
-                    // println!("NODE {node} CRASHED");
                     self.node_is_up[node as usize] = false;
                     let downtime = self
                         .node_downtimes
@@ -191,18 +183,6 @@ where
                     return Ok(());
                 }
 
-                // match next_event {
-                //     Event::NodeCrashed { node } => {
-                //         self.node_states[node].is_up = false;
-                //         self.trace.push();
-                //     }
-                //     Event::NodeRestarted { node } => {
-                //         self.node_states[node].is_up = true;
-                //         let action_node = next_event.target_node();
-                //         let
-                //     }
-                // }
-                //
                 let action_node = next_event.target_node();
 
                 if let Event::NodeRestarted {
@@ -238,7 +218,6 @@ where
                 }
 
                 let new_actions = self.nodes[action_node as usize].handle(&next_event);
-                // println!("{:?}", new_actions);
                 for action in new_actions {
                     if let Action::SetTimer {
                         min_delay,
@@ -364,7 +343,7 @@ where
                 kind,
             } => {
                 self.insert_into_agenda(
-                    self.now_ms + 10,
+                    self.now_ms + 30,
                     Event::StatePersisted {
                         node,
                         current_term,
@@ -427,9 +406,6 @@ where
 pub fn return_event_list(events: &[(u64, Event<u64>)]) -> String {
     let mut event_list = String::new();
     for (now_ms, event) in events.iter() {
-        // println!("The time is: {}", now_ms);
-        // println!("{}", return_formatted_event(event));
-
         event_list += &format!(
             "The time is: {}\n{}\n",
             now_ms,

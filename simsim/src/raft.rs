@@ -6,17 +6,24 @@ use std::{cmp::max, collections::HashSet};
 pub struct ElectionSafetyChecker {
     terms: Vec<u64>,
     voters: Vec<HashSet<u32>>,
+    grant_pairs: HashSet<(u32, u64)>,
     total_leaders: u64,
     highest_seen_term: u64,
+    // First trace index, not yet checked
+    trace_cursor: usize,
 }
 
 impl ElectionSafetyChecker {
     pub fn new(world: &World<RaftNode>) -> Self {
         Self {
             terms: vec![0; world.nodes.len()],
+            // Set of nodes that have voted for the given node in it's latest term
             voters: vec![HashSet::new(); world.nodes.len()],
+            // Pairs (voter, term) to check that every voter has voted at most once in every term
+            grant_pairs: HashSet::new(),
             total_leaders: 0,
             highest_seen_term: 0,
+            trace_cursor: 0,
         }
     }
 }
@@ -45,23 +52,34 @@ impl Checker<RaftNode> for ElectionSafetyChecker {
             }
         }
         self.terms = new_terms;
-        // println!("{:?}", self.terms);
 
-        if let Some((
-            _,
-            Event::MessageDelivered {
-                from,
-                to,
-                msg:
-                    RPC::RequestVoteReply {
-                        term,
-                        vote_granted: true,
-                    },
-            },
-        )) = world.trace.last()
-            && self.terms[*to as usize] == *term
-        {
-            self.voters[*to as usize].insert(*from);
+        while self.trace_cursor < world.trace.len() {
+            let grant_pairs_prev_len = self.grant_pairs.len();
+            if let (
+                _,
+                Event::MessageDelivered {
+                    from,
+                    to,
+                    msg:
+                        RPC::RequestVoteReply {
+                            term,
+                            vote_granted: true,
+                        },
+                },
+            ) = &world.trace[self.trace_cursor]
+            {
+                self.grant_pairs.insert((*from, *term));
+                if self.terms[*to as usize] == *term {
+                    self.voters[*to as usize].insert(*from);
+                }
+                if self.grant_pairs.len() <= grant_pairs_prev_len {
+                    return Err(format!(
+                        "Node {}, has voted more than once in term {}!",
+                        from, term,
+                    ));
+                }
+            }
+            self.trace_cursor += 1;
         }
 
         // Leader count and the respective term set among those leaders. If there are more leaders
@@ -172,10 +190,6 @@ mod tests {
         checker.terms[1] = 2;
         checker.voters[1] = HashSet::from([2]);
 
-        // if let Err(message) = checker.check(&world) {
-        //     println!("{}", message);
-        // }
-
         assert!(checker.check(&world).is_ok());
     }
 
@@ -198,10 +212,6 @@ mod tests {
 
         let _ = world.run(&mut checker);
 
-        // println!("{:?}", world.trace);
-        // println!("{:?}", world.agenda);
-        // println!("{:?}", world.now_ms);
-
         for node in &world.nodes {
             // println!("{:?}", node);
             assert!(node.current_term > 1);
@@ -223,25 +233,12 @@ mod tests {
         let mut world = World::new(43, config, build_raft_nodes());
         let mut checker = ElectionSafetyChecker::new(&world);
 
-        // println!("{}", checker.terms.len());
-        // println!("{:?}", world.nodes.len());
-
-        // world.handle_action(
-        //     0,
-        //     Action::SetTimer {
-        //         min_delay: 150,
-        //         max_delay: 300,
-        //     },
-        // );
-
-        // let _ = world.run(10000, 1000, &mut checker);
         world.nodes[0].current_term = 1;
 
         let _ = checker.check(&world);
 
         world.nodes[0].current_term = 0;
 
-        // println!("{:?}", checker.check(&world));
         assert!(checker.check(&world).is_err());
     }
 
@@ -289,7 +286,7 @@ mod tests {
             // WARNING!: Could plausibly fail with another generator configuration
             // Fix: check the value without heartbeats and increase the upper bound with
             // heartbeats accordingly
-            // assert!(checker.highest_seen_term < 40);
+            assert!(checker.highest_seen_term < 30);
         }
     }
 
@@ -312,9 +309,6 @@ mod tests {
 
             let outcome = world.run(&mut checker);
 
-            // if seed == 226 {
-            //     world.trace.last_chunk::<20>());
-            // }
             if outcome.is_err() {
                 world.debug_trace();
             }
@@ -342,7 +336,7 @@ mod tests {
             // WARNING!: Could plausibly fail with another generator configuration
             // Fix: check the value without heartbeats and increase the upper bound with
             // heartbeats accordingly
-            // assert!(checker.highest_seen_term < 40);
+            assert!(checker.highest_seen_term < 30);
         }
     }
 
@@ -388,5 +382,4 @@ mod tests {
     // To test:
     // - if a node became a follower and got a positive RequestVoteReply, it can't be promoted to
     // leader, as the leader for the term has already been elected
-    // -
 }

@@ -345,8 +345,6 @@ mod tests {
         world.insert_into_agenda(200, Event::TimerFired { node: 2 });
         let _ = world.run(&mut checker);
 
-        // println!("{:#?}", world.trace);
-
         assert_eq!(world.ghost_timer_cnt[2], 1);
 
         assert!(world.trace.contains(&(200, Event::TimerFired { node: 2 })));

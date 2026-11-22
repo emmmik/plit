@@ -150,7 +150,6 @@ impl Protocol for RaftNode {
                 self.role = Role::Candidate;
 
                 self.current_term += 1;
-                // self.current_term = 1;
                 self.voted_for = Some(*node);
                 self.votes = 1;
 
@@ -165,19 +164,6 @@ impl Protocol for RaftNode {
                 self.start_timeout(&mut actions);
                 self.push_to_peers(&mut actions, request_vote_rpc);
 
-                // actions.push(Action::SetTimer {
-                //     min_delay: MIN_ELECTION_TIMEOUT,
-                //     max_delay: MAX_ELECTION_TIMEOUT,
-                // });
-                //
-                // for &peer in &self.peers {
-                //     actions.push(Action::Send {
-                //         to: peer,
-                //         msg: request_vote_rpc,
-                //     });
-                // }
-
-                // println!("{:#?}", actions);
                 actions
             }
             Event::MessageDelivered { from, to, msg } => match msg {
@@ -204,10 +190,6 @@ impl Protocol for RaftNode {
 
                     self.start_timeout(&mut actions);
 
-                    // actions.push(Action::Persist {
-                    //     current_term: *term,
-                    //     voted_for: *candidate_id,
-                    // });
                     self.persist(&mut actions, *term, Some(*candidate_id), true);
 
                     actions
