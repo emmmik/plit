@@ -57,19 +57,10 @@ impl<T> Event<T> {
     pub fn target_node(&self) -> u32 {
         match self {
             Event::TimerFired { node } => *node,
-            Event::MessageDelivered { from, to, msg } => *to,
-            Event::StatePersisted {
-                node,
-                current_term,
-                voted_for,
-                kind,
-            } => *node,
+            Event::MessageDelivered { to, .. } => *to,
+            Event::StatePersisted { node, .. } => *node,
             Event::NodeCrashed { node } => *node,
-            Event::NodeRestarted {
-                node,
-                current_term,
-                voted_for,
-            } => *node,
+            Event::NodeRestarted { node, .. } => *node,
         }
     }
 }
@@ -86,9 +77,62 @@ pub struct RaftNode {
     pub role: Role,
     pub current_term: u64,
     voted_for: Option<u32>,
-    // log
+    pub log: RaftLog,
     pub votes: u32,
     peers: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum LogEntry {
+    SET { x: u64, term: u64 },
+}
+
+#[derive(Debug)]
+pub struct RaftLog {
+    log: Vec<LogEntry>,
+}
+
+impl Default for RaftLog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RaftLog {
+    pub fn new() -> Self {
+        Self { log: Vec::new() }
+    }
+
+    pub fn append(&mut self, entry: LogEntry) -> usize {
+        self.log.push(entry);
+        self.log.len()
+    }
+
+    pub fn term_at(&self, index: usize) -> Option<u64> {
+        if index == 0 || index > self.log.len() {
+            return None;
+        }
+        let LogEntry::SET { term, .. } = self.log[index - 1];
+        Some(term)
+    }
+
+    pub fn last(&self) -> Option<(usize, u64)> {
+        if self.log.is_empty() {
+            return None;
+        }
+        let LogEntry::SET { term, .. } = self.log.last().unwrap();
+        Some((self.log.len(), *term))
+    }
+
+    // Overwrite everything AFTER index
+    pub fn overwrite(&mut self, index: usize, entries: &[LogEntry]) {
+        while self.log.len() > index {
+            self.log.pop();
+        }
+        for entry in entries {
+            self.log.push(*entry);
+        }
+    }
 }
 
 impl RaftNode {
@@ -97,6 +141,7 @@ impl RaftNode {
             role: Role::Follower,
             current_term: 0,
             voted_for: None,
+            log: RaftLog::new(),
             votes: 0,
             peers,
         }
@@ -166,7 +211,7 @@ impl Protocol for RaftNode {
 
                 actions
             }
-            Event::MessageDelivered { from, to, msg } => match msg {
+            Event::MessageDelivered { msg, .. } => match msg {
                 RPC::RequestVote { term, candidate_id } => {
                     let mut actions = vec![];
 
@@ -256,10 +301,10 @@ impl Protocol for RaftNode {
                 }
             },
             Event::StatePersisted {
-                node,
                 current_term,
                 voted_for,
                 kind,
+                ..
             } => {
                 if !kind || self.current_term != *current_term || self.voted_for != *voted_for {
                     return vec![];
@@ -276,9 +321,9 @@ impl Protocol for RaftNode {
                 actions
             }
             Event::NodeRestarted {
-                node,
                 current_term,
                 voted_for,
+                ..
             } => {
                 self.current_term = *current_term;
                 self.voted_for = *voted_for;
@@ -290,7 +335,7 @@ impl Protocol for RaftNode {
 
                 actions
             }
-            Event::NodeCrashed { node } => {
+            Event::NodeCrashed { .. } => {
                 panic!("NodeCrashed handling inside raft-core!");
             }
         }

@@ -12,7 +12,7 @@ impl Protocol for Node {
     fn handle(&mut self, event: &Event<u64>) -> Vec<Action<u64>> {
         let mut actions: Vec<Action<u64>> = Vec::new();
         match event {
-            Event::MessageDelivered { from, to, msg } => {
+            Event::MessageDelivered { msg, .. } => {
                 if self.value < *msg {
                     self.value = *msg;
                     for &peer in &self.peers {
@@ -24,7 +24,7 @@ impl Protocol for Node {
                 }
                 actions
             }
-            Event::TimerFired { node } => {
+            Event::TimerFired { .. } => {
                 for &peer in &self.peers {
                     actions.push(Action::Send {
                         to: peer,

@@ -4,7 +4,7 @@ use raft_core::{Action, Event, Protocol};
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, VecDeque},
-    fmt::{Debug, format},
+    fmt::Debug,
 };
 
 pub trait Checker<N: Protocol> {
@@ -152,11 +152,11 @@ where
                 let Reverse(agenda_element) = self.agenda.pop().unwrap();
                 let (due_time, id, mut next_event) = agenda_element;
 
-                if let Event::TimerFired { node } = next_event {
-                    if id < self.last_timer_id[node as usize] {
-                        self.ghost_timer_cnt[node as usize] += 1;
-                        return Ok(());
-                    }
+                if let Event::TimerFired { node } = next_event
+                    && id < self.last_timer_id[node as usize]
+                {
+                    self.ghost_timer_cnt[node as usize] += 1;
+                    return Ok(());
                 }
 
                 self.now_ms = due_time;
@@ -185,12 +185,7 @@ where
 
                 let action_node = next_event.target_node();
 
-                if let Event::NodeRestarted {
-                    node,
-                    current_term,
-                    voted_for,
-                } = next_event
-                {
+                if let Event::NodeRestarted { node, .. } = next_event {
                     self.node_is_up[node as usize] = true;
 
                     // The event must be rebuilt, as if any updates were written to the disk while
@@ -206,7 +201,7 @@ where
                     node,
                     current_term,
                     voted_for,
-                    kind,
+                    ..
                 } = next_event
                 {
                     self.node_states[node as usize].current_term = current_term;
@@ -219,18 +214,9 @@ where
 
                 let new_actions = self.nodes[action_node as usize].handle(&next_event);
                 for action in new_actions {
-                    if let Action::SetTimer {
-                        min_delay,
-                        max_delay,
-                    } = action
-                    {
+                    if let Action::SetTimer { .. } = action {
                         self.handle_action(action_node, action);
-                    } else if let Action::Persist {
-                        current_term,
-                        voted_for,
-                        kind,
-                    } = action
-                    {
+                    } else if let Action::Persist { .. } = action {
                         self.handle_action(action_node, action);
                     } else {
                         let is_dropped = self.drops.pop_front();
@@ -380,7 +366,7 @@ where
             node,
             current_term,
             voted_for,
-            kind,
+            ..
         } => {
             format!(
                 "State was persisted on node {}: currentTerm = {}, votedFor = {:?}",

@@ -148,8 +148,10 @@ pub fn start_raft_sim(world: &mut World<RaftNode>) {
 
 #[cfg(test)]
 mod tests {
+    use raft_core::LogEntry;
+
     use super::*;
-    use crate::{ScenarioConfig, return_formatted_event};
+    use crate::ScenarioConfig;
 
     #[test]
     fn raft_election() {
@@ -377,6 +379,35 @@ mod tests {
         );
         let _ = world.run(&mut checker);
         assert!(world.nodes[0].role != Role::Leader);
+    }
+
+    #[test]
+    fn check_log() {
+        let config = ScenarioConfig {
+            max_delay: 300,
+            drop_percent: 0,
+            preseed_size: 10000,
+            until: 1000,
+            max_steps: 100,
+            node_count: 3,
+            seed_crashes: true,
+        };
+
+        let mut world = World::new(1, config, build_raft_nodes());
+
+        world.nodes[0].log.append(LogEntry::SET { x: 1, term: 1 });
+        world.nodes[0].log.append(LogEntry::SET { x: 1, term: 2 });
+        world.nodes[0].log.append(LogEntry::SET { x: 1, term: 2 });
+
+        assert_eq!(world.nodes[0].log.term_at(2), Some(2));
+        assert_eq!(world.nodes[0].log.last(), Some((3, 2)));
+
+        world.nodes[0]
+            .log
+            .overwrite(1, &[LogEntry::SET { x: 2, term: 3 }]);
+
+        assert_eq!(world.nodes[0].log.term_at(3), None);
+        assert_eq!(world.nodes[0].log.term_at(2), Some(3));
     }
 
     // To test:
