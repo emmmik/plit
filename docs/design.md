@@ -25,3 +25,7 @@
 ## Disk Persistence
 
 For simplicity (meaning not going into bare metal), the simulation's disk completes writes for a node in the same order as they are issued with a constant delay.
+
+## Log indexing
+
+To stay accurate to the Raft paper's log implementation, the log is 1-indexed.

@@ -326,14 +326,16 @@ where
             Action::Persist {
                 current_term,
                 voted_for,
+                log,
                 kind,
             } => {
                 self.insert_into_agenda(
-                    self.now_ms + 30,
+                    self.now_ms + 10,
                     Event::StatePersisted {
                         node,
                         current_term,
                         voted_for,
+                        log,
                         kind,
                     },
                 );

@@ -262,6 +262,10 @@ mod tests {
             let mut checker = ElectionSafetyChecker::new(&world);
 
             let outcome = world.run(&mut checker);
+            // world.debug_trace();
+            if seed == 5 {
+                world.debug_trace();
+            }
 
             assert!(outcome.is_ok(), "{}", outcome.unwrap_err());
         }
@@ -312,7 +316,7 @@ mod tests {
             let outcome = world.run(&mut checker);
 
             if outcome.is_err() {
-                world.debug_trace();
+                // world.debug_trace();
             }
             assert!(outcome.is_ok(), "{}", outcome.unwrap_err());
         }
@@ -332,6 +336,8 @@ mod tests {
             let mut checker = ElectionSafetyChecker::new(&world);
 
             let _ = world.run(&mut checker);
+
+            // world.debug_trace();
 
             assert!(checker.total_leaders > 0);
 
@@ -400,7 +406,7 @@ mod tests {
         world.nodes[0].log.append(LogEntry::SET { x: 1, term: 2 });
 
         assert_eq!(world.nodes[0].log.term_at(2), Some(2));
-        assert_eq!(world.nodes[0].log.last(), Some((3, 2)));
+        assert_eq!(world.nodes[0].log.last(), (3, 2));
 
         world.nodes[0]
             .log
@@ -408,6 +414,51 @@ mod tests {
 
         assert_eq!(world.nodes[0].log.term_at(3), None);
         assert_eq!(world.nodes[0].log.term_at(2), Some(3));
+    }
+
+    #[test]
+    fn check_append_entries() {
+        let config = ScenarioConfig {
+            max_delay: 300,
+            drop_percent: 0,
+            preseed_size: 10000,
+            until: 1000,
+            max_steps: 100,
+            node_count: 3,
+            seed_crashes: true,
+        };
+
+        let mut world = World::new(1, config, build_raft_nodes());
+
+        world.nodes[0].log.append(LogEntry::SET { x: 1, term: 1 });
+        world.nodes[0].log.append(LogEntry::SET { x: 1, term: 2 });
+
+        world.nodes[1].log.append(LogEntry::SET { x: 1, term: 1 });
+        world.nodes[1].log.append(LogEntry::SET { x: 1, term: 2 });
+
+        world.nodes[1].role = Role::Leader;
+
+        world.insert_into_agenda(
+            10,
+            Event::MessageDelivered {
+                from: 1,
+                to: 0,
+                msg: RPC::AppendEntries {
+                    term: 1,
+                    prev_log_index: 2,
+                    prev_log_term: 2,
+                    entries: vec![LogEntry::SET { x: 3, term: 1 }],
+                    leader_id: 1,
+                },
+            },
+        );
+
+        let _ = world.step();
+        let _ = world.step();
+
+        world.debug_trace();
+
+        assert_eq!(world.nodes[0].log.last(), (3, 1));
     }
 
     // To test:
