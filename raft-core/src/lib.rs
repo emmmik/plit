@@ -1,3 +1,5 @@
+use std::cmp::min;
+
 const MIN_ELECTION_TIMEOUT: u64 = 150;
 const MAX_ELECTION_TIMEOUT: u64 = 300;
 const HEARTBEAT_TIMEOUT: u64 = 50;
@@ -82,6 +84,10 @@ pub struct RaftNode {
     pub log: RaftLog,
     pub votes: u32,
     peers: Vec<u32>,
+
+    // Leader-relevant fields
+    next_index: Vec<usize>,
+    match_index: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -154,6 +160,8 @@ impl RaftNode {
             log: RaftLog::new(),
             votes: 0,
             peers,
+            next_index: vec![],
+            match_index: vec![],
         }
     }
 }
@@ -163,13 +171,15 @@ pub enum RPC {
     AppendEntries {
         term: u64,
         prev_log_index: usize,
-        prev_log_term: u64,
+        prev_log_term: Option<u64>,
         entries: Vec<LogEntry>,
         leader_id: u32,
     },
     AppendEntriesReply {
         term: u64,
+        request_term: u64,
         success: bool,
+        last_index: usize,
     },
     RequestVote {
         term: u64,
@@ -189,7 +199,11 @@ pub enum RPC {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ReplyKind {
     VoteReply,
-    AppendReply { leader_id: u32 },
+    AppendReply {
+        leader_id: u32,
+        request_term: u64,
+        last_index: usize,
+    },
     VoteRequest,
 }
 
@@ -213,7 +227,7 @@ impl Protocol for RaftNode {
                             entries: vec![],
                             leader_id: *node,
                             prev_log_index,
-                            prev_log_term,
+                            prev_log_term: Some(prev_log_term),
                         },
                     );
 
@@ -242,7 +256,7 @@ impl Protocol for RaftNode {
 
                 actions
             }
-            Event::MessageDelivered { msg, to, .. } => match msg {
+            Event::MessageDelivered { msg, to, from } => match msg {
                 RPC::RequestVote { term, candidate_id } => {
                     let mut actions = vec![];
 
@@ -311,19 +325,38 @@ impl Protocol for RaftNode {
                         self.votes += 1;
                         if self.votes > NODE_NUMBER / 2 {
                             self.role = Role::Leader;
-                            let (prev_log_index, prev_log_term) = self.log.last();
+                            let (last_log_index, last_log_term) = self.log.last();
+                            self.next_index
+                                .resize(self.peers.len() + 1, last_log_index + 1);
+                            self.match_index.resize(self.peers.len() + 1, 0);
 
-                            self.push_to_peers(
-                                &mut actions,
-                                RPC::AppendEntries {
-                                    term: self.current_term,
-                                    entries: self.log.return_after(prev_log_index).to_vec(),
-                                    leader_id: *to,
-                                    prev_log_index,
-                                    prev_log_term,
-                                    // leader_id: node,
-                                },
-                            );
+                            for i in 0..self.peers.len() + 1 {
+                                if i as u32 == *to {
+                                    continue;
+                                }
+                                actions.push(Action::Send {
+                                    to: i as u32,
+                                    msg: RPC::AppendEntries {
+                                        term: self.current_term,
+                                        prev_log_index: self.next_index[i] - 1,
+                                        prev_log_term: self.log.term_at(self.next_index[i] - 1),
+                                        entries: self
+                                            .log
+                                            .return_after(self.next_index[i] - 1)
+                                            .to_vec(),
+                                        leader_id: *to,
+                                    },
+                                });
+                            }
+
+                            // RPC::AppendEntries {
+                            //     term: self.current_term,
+                            //     entries: self.log.return_after(last_log_index).to_vec(),
+                            //     leader_id: *to,
+                            //     prev_log_index,
+                            //     prev_log_term,
+                            //     // leader_id: node,
+                            // },
                         }
                     }
                     actions
@@ -336,15 +369,24 @@ impl Protocol for RaftNode {
                     leader_id,
                 } => {
                     let mut actions = vec![];
+                    // if *prev_log_index == 0 {
+                    //     println!(
+                    //         "Asker Term = {:?}, self.current_term  = {:?}",
+                    //         *term, self.current_term,
+                    //     );
+                    //     println!("{:?}", self.log.term_at(*prev_log_index) == *prev_log_term);
+                    // }
 
                     if *term < self.current_term
-                        || self.log.term_at(*prev_log_index) != Some(*prev_log_term)
+                        || self.log.term_at(*prev_log_index) != *prev_log_term
                     {
                         actions.push(Action::Send {
                             to: *leader_id,
                             msg: RPC::AppendEntriesReply {
                                 term: self.current_term,
+                                request_term: *term,
                                 success: false,
+                                last_index: self.log.last().0,
                             },
                         });
                         return actions;
@@ -364,6 +406,8 @@ impl Protocol for RaftNode {
                         self.log.clone(),
                         Some(ReplyKind::AppendReply {
                             leader_id: *leader_id,
+                            last_index: *prev_log_index + entries.len(),
+                            request_term: *term,
                         }),
                     );
 
@@ -372,8 +416,52 @@ impl Protocol for RaftNode {
 
                     actions
                 }
-                RPC::AppendEntriesReply { term, success } => {
-                    vec![]
+                RPC::AppendEntriesReply {
+                    term,
+                    success,
+                    last_index,
+                    request_term,
+                } => {
+                    let mut actions = vec![];
+                    if *term > self.current_term {
+                        self.current_term = *term;
+                        self.role = Role::Follower;
+                        self.voted_for = None;
+                        self.votes = 0;
+                        self.persist(
+                            &mut actions,
+                            self.current_term,
+                            self.voted_for,
+                            self.log.clone(),
+                            None,
+                        );
+                        return actions;
+                    }
+                    if self.role != Role::Leader || *request_term != self.current_term {
+                        return actions;
+                    }
+                    if *success {
+                        self.match_index[*from as usize] = *last_index;
+                        self.next_index[*from as usize] = *last_index + 1;
+                        return actions;
+                    }
+                    self.next_index[*from as usize] =
+                        min(self.next_index[*from as usize] - 1, *last_index + 1);
+                    actions.push(Action::Send {
+                        to: *from,
+                        msg: RPC::AppendEntries {
+                            term: self.current_term,
+                            prev_log_index: self.next_index[*from as usize] - 1,
+                            prev_log_term: self.log.term_at(self.next_index[*from as usize] - 1),
+                            entries: self
+                                .log
+                                .return_after(self.next_index[*from as usize] - 1)
+                                .to_vec(),
+                            leader_id: *to,
+                        },
+                    });
+
+                    actions
                 }
             },
             Event::StatePersisted {
@@ -399,12 +487,18 @@ impl Protocol for RaftNode {
                         };
                         self.push_to_peers(&mut actions, request_vote_rpc);
                     }
-                    &Some(ReplyKind::AppendReply { leader_id }) => {
+                    &Some(ReplyKind::AppendReply {
+                        leader_id,
+                        last_index,
+                        request_term,
+                    }) => {
                         actions.push(Action::Send {
                             to: leader_id,
                             msg: RPC::AppendEntriesReply {
                                 term: self.current_term,
+                                request_term,
                                 success: true,
+                                last_index,
                             },
                         });
                     }

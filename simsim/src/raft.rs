@@ -446,7 +446,7 @@ mod tests {
                 msg: RPC::AppendEntries {
                     term: 1,
                     prev_log_index: 2,
-                    prev_log_term: 2,
+                    prev_log_term: Some(2),
                     entries: vec![LogEntry::SET { x: 3, term: 1 }],
                     leader_id: 1,
                 },
